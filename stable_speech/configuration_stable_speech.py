@@ -14,8 +14,8 @@
 # limitations under the License.
 """ Stable Speech model configuration"""
 
-from transformers.configuration_utils import PretrainedConfig
 from transformers import AutoConfig, logging
+from transformers.configuration_utils import PretrainedConfig
 
 
 logger = logging.get_logger(__name__)
