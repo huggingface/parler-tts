@@ -37,7 +37,8 @@ from transformers import (
     set_seed,
 )
 from transformers.trainer_utils import get_last_checkpoint
-from transformers.utils import check_min_version, send_example_telemetry
+from transformers.utils import check_min_version
+from transformers.models.whisper.tokenization_whisper import LANGUAGES
 
 
 logger = logging.getLogger(__name__)
@@ -46,13 +47,28 @@ logger = logging.getLogger(__name__)
 check_min_version("4.38.0.dev0")
 
 
-def random_subsample(wav: np.ndarray, max_length: float, sample_rate: int = 16000):
+def random_subsample(wav: np.ndarray, max_length: float, sample_rate: int = 16000) -> np.ndarray:
     """Randomly sample chunks of `max_length` seconds from the input audio"""
     sample_length = int(round(sample_rate * max_length))
     if len(wav) <= sample_length:
         return wav
     random_offset = randint(0, len(wav) - sample_length - 1)
     return wav[random_offset : random_offset + sample_length]
+
+
+def preprocess_labels(labels: List[str]) -> List[str]:
+    """Apply pre-processing formatting to the accent labels"""
+    processed_labels = []
+    for label in labels:
+        if "_" in label:
+            # voxpopuli stylises the accent as a language code (e.g. en_pl for "polish") - convert to full accent
+            language_code = label.split("_")[-1]
+            label = LANGUAGES[language_code]
+        if label == "British":
+            # 1 speaker in VCTK is labelled as British instead of English - let's normalise
+            label = "English"
+        processed_labels.append(label.capitalize())
+    return processed_labels
 
 
 @dataclass
@@ -79,6 +95,12 @@ class DataTrainingArguments:
             "multiple datasets by separating dataset configs by a '+' symbol."
         },
     )
+    train_split_name: str = field(
+        default="train",
+        metadata={
+            "help": ("The name of the training data set split to use (via the datasets library). Defaults to 'train'")
+        },
+    )
     train_dataset_samples: str = field(
         default=None,
         metadata={
@@ -96,6 +118,15 @@ class DataTrainingArguments:
         default=None,
         metadata={
             "help": "The configuration name of the evaluation dataset to use (via the datasets library). Defaults to the training dataset config name if unspecified"
+        },
+    )
+    eval_split_name: str = field(
+        default="validation",
+        metadata={
+            "help": (
+                "The name of the evaluation data set split to use (via the datasets"
+                " library). Defaults to 'validation'"
+            )
         },
     )
     audio_column_name: str = field(
@@ -200,12 +231,6 @@ def convert_dataset_str_to_list(
 ):
     if isinstance(dataset_names, str):
         dataset_names = dataset_names.split("+")
-
-        # we assume that all the datasets we're using derive from the distil-whisper org on the Hub - prepend the org name if necessary
-        for i in range(len(dataset_names)):
-            ds_name = dataset_names[i]
-            dataset_names[i] = f"distil-whisper/{ds_name}" if "/" not in ds_name else ds_name
-
         dataset_config_names = dataset_config_names.split("+")
         splits = splits.split("+") if splits is not None else None
         label_column_names = label_column_names.split("+") if label_column_names is not None else None
@@ -345,10 +370,6 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
-    # information sent is the one passed as arguments along with your Python/PyTorch versions.
-    send_example_telemetry("run_audio_classification", model_args, data_args)
-
     # Setup logging
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -410,8 +431,6 @@ def main():
             trust_remote_code=data_args.trust_remote_code,
         )
 
-        raw_datasets_train_features = raw_datasets["train"].features.keys()
-
     if training_args.do_eval:
         dataset_names_dict = convert_dataset_str_to_list(
             data_args.eval_dataset_name if data_args.eval_dataset_name else data_args.train_dataset_name,
@@ -452,7 +471,7 @@ def main():
                 features = raw_datasets[pretty_name].features.keys()
                 if dataset_dict["label_column_name"] not in features:
                     raise ValueError(
-                        f"--label_column_name {data_args.label_column_name} not found in dataset '{data_args.dataset_name}'. "
+                        f"--label_column_name {data_args.eval_label_column_name} not found in dataset '{data_args.dataset_name}'. "
                         "Make sure to set `--label_column_name` to the correct text column - one of "
                         f"{', '.join(raw_datasets['train'].column_names)}."
                     )
@@ -498,6 +517,7 @@ def main():
             subsampled_wavs.append(wav)
         inputs = feature_extractor(subsampled_wavs, sampling_rate=feature_extractor.sampling_rate)
         output_batch = {model_input_name: inputs.get(model_input_name)}
+        output_batch["labels"] = preprocess_labels(batch["labels"])
         return output_batch
 
     def val_transforms(batch):
@@ -505,11 +525,12 @@ def main():
         wavs = [audio["array"] for audio in batch[data_args.audio_column_name]]
         inputs = feature_extractor(wavs, sampling_rate=feature_extractor.sampling_rate)
         output_batch = {model_input_name: inputs.get(model_input_name)}
+        output_batch["labels"] = preprocess_labels(batch["labels"])
         return output_batch
 
     # Prepare label mappings.
     # We'll include these in the model's config to get human readable labels in the Inference API.
-    labels = raw_datasets["train"].features[data_args.label_column_name].names
+    labels = raw_datasets["train"]["label"]
     label2id, id2label = {}, {}
     for i, label in enumerate(labels):
         label2id[label] = str(i)
