@@ -197,7 +197,7 @@ class ModelArguments:
         default=None, metadata={"help": "Name or path of preprocessor config."}
     )
     freeze_feature_encoder: bool = field(
-        default=True, metadata={"help": "Whether to freeze the feature encoder layers of the model. Only relevant for Wav2Vec2-style models."}
+        default=False, metadata={"help": "Whether to freeze the feature encoder layers of the model. Only relevant for Wav2Vec2-style models."}
     )
     freeze_base_model: bool = field(
         default=True, metadata={"help": "Whether to freeze the base encoder of the model."}
@@ -297,6 +297,7 @@ def load_multiple_datasets(
     dataset_config_names: Union[List, str],
     splits: Optional[Union[List, str]] = None,
     label_column_names: Optional[List] = None,
+    sampling_rate: Optional[int] = 16000,
     stopping_strategy: Optional[str] = "first_exhausted",
     dataset_samples: Optional[Union[List, np.array]] = None,
     streaming: Optional[bool] = False,
@@ -332,6 +333,8 @@ def load_multiple_datasets(
                 f" '{dataset_dict['name']}'. Make sure to set `--audio_column_name` to"
                 f" the correct audio column - one of {', '.join(dataset_features)}."
             )
+        # resample to specified sampling rate
+        dataset = dataset.cast_column("audio", datasets.features.Audio(sampling_rate))
 
         if dataset_dict["label_column_name"] not in dataset_features:
             raise ValueError(
@@ -617,16 +620,19 @@ def main():
         ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
     )
 
-    # freeze the convolutional waveform encoder
+    # freeze the convolutional waveform encoder for wav2vec2-style models
     if model_args.freeze_feature_encoder:
-        model.freeze_feature_encoder()
+        if hasattr(model, "freeze_feature_encoder"):
+            model.freeze_feature_encoder()
+        else:
+            raise ValueError("Method for freezing the feature encoder is not defined for Whisper-style models.")
 
     if model_args.freeze_base_model:
-        if model.hasattr("freeze_base_model"):
+        if hasattr(model, "freeze_base_model"):
             # wav2vec2-style models
             model.freeze_base_model()
             model.freeze_feature_encoder()
-        elif model.hasattr("freeze_encoder"):
+        elif hasattr(model, "freeze_encoder"):
             # whisper-style models
             model.freeze_encoder()
         else:

@@ -1,0 +1,78 @@
+command:
+  - python3
+  - ${program}
+  - --load_best_model_at_end
+  - --fp16
+  - --do_train
+  - --do_eval
+  - --trust_remote_code
+  - --overwrite_output_dir
+  - ${args}
+method: grid
+metric:
+  goal: minimize
+  name: eval/accuracy
+parameters:
+  model_name_or_path:
+    values:
+      - facebook/mms-lid-126
+      - openai/whisper-large-v3
+      - facebook/w2v-bert-2.0
+  train_dataset_name:
+    value: sanchit-gandhi/vctk+facebook/voxpopuli+sanchit-gandhi/edacc
+  train_dataset_config_name:
+    value: default+en_accented+default
+  train_split_name:
+    value: train+test+validation
+  train_label_column_name:
+    value: accent+accent+accent
+  eval_dataset_name:
+    value: sanchit-gandhi/edacc
+  eval_dataset_config_name:
+    value: default
+  eval_split_name:
+    value: test
+  eval_label_column_name:
+    value: accent
+  output_dir:
+    value: ./
+  remove_unused_columns:
+    value: false
+  learning_rate:
+    value: 1e-4
+  max_length_seconds:
+    value: 20
+  attention_mask:
+    value: false
+  warmup_ratio:
+    value: 0.1
+  num_train_epochs:
+    value: 5
+  per_device_train_batch_size:
+    value: 32
+  per_device_eval_batch_size:
+    value: 32
+  preprocessing_num_workers:
+    value: 16
+  dataloader_num_workers:
+    value: 4
+  logging_strategy:
+    value: steps
+  logging_steps:
+    value: 10
+  evaluation_strategy:
+    value: epoch
+  save_strategy:
+    value: epoch
+  metric_for_best_model:
+    value: accuracy
+  save_total_limit:
+    value: 3
+  freeze_base_model:
+    values:
+      - true
+      - false
+  push_to_hub:
+    value: false
+program: run_audio_classification.py
+project: mms-lid-accent-classification

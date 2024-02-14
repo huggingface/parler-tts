@@ -3,7 +3,7 @@
 python run_audio_classification.py \
     --model_name_or_path "facebook/mms-lid-126" \
     --train_dataset_name "sanchit-gandhi/vctk+facebook/voxpopuli+sanchit-gandhi/edacc" \
-    --train_dataset_config_name "main+en_accented+default" \
+    --train_dataset_config_name "default+en_accented+default" \
     --train_split_name "train+test+validation" \
     --train_label_column_name "accent+accent+accent" \
     --eval_dataset_name "sanchit-gandhi/edacc" \
