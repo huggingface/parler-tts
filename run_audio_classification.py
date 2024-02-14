@@ -35,7 +35,7 @@ from transformers import (
     HfArgumentParser,
     Trainer,
     TrainingArguments,
-    set_seed,
+    set_seed, WhisperForAudioClassification,
 )
 from transformers.models.whisper.tokenization_whisper import LANGUAGES
 from transformers.trainer_utils import get_last_checkpoint
@@ -163,10 +163,6 @@ class DataTrainingArguments:
             )
         },
     )
-    min_length_seconds: float = field(
-        default=5,
-        metadata={"help": "Audio clips less than this value will be filtered during training."},
-    )
     max_length_seconds: float = field(
         default=20,
         metadata={"help": "Audio clips will be randomly cut to this length during training if the value is set."},
@@ -201,7 +197,10 @@ class ModelArguments:
         default=None, metadata={"help": "Name or path of preprocessor config."}
     )
     freeze_feature_encoder: bool = field(
-        default=True, metadata={"help": "Whether to freeze the feature encoder layers of the model."}
+        default=True, metadata={"help": "Whether to freeze the feature encoder layers of the model. Only relevant for Wav2Vec2-style models."}
+    )
+    freeze_base_model: bool = field(
+        default=True, metadata={"help": "Whether to freeze the base encoder of the model."}
     )
     attention_mask: bool = field(
         default=True, metadata={"help": "Whether to generate an attention mask in the feature extractor."}
@@ -438,6 +437,7 @@ def main():
             cache_dir=model_args.cache_dir,
             token=True if model_args.token else None,
             trust_remote_code=model_args.trust_remote_code,
+            num_proc=data_args.preprocessing_num_workers,
             # streaming=data_args.streaming, TODO(SG): optionally enable streaming mode
         )
 
@@ -466,6 +466,7 @@ def main():
                 cache_dir=model_args.cache_dir,
                 token=True if model_args.token else None,
                 trust_remote_code=model_args.trust_remote_code,
+                num_proc=data_args.preprocessing_num_workers,
                 # streaming=data_args.streaming,
             )
             features = raw_datasets[pretty_name].features.keys()
@@ -619,6 +620,17 @@ def main():
     # freeze the convolutional waveform encoder
     if model_args.freeze_feature_encoder:
         model.freeze_feature_encoder()
+
+    if model_args.freeze_base_model:
+        if model.hasattr("freeze_base_model"):
+            # wav2vec2-style models
+            model.freeze_base_model()
+            model.freeze_feature_encoder()
+        elif model.hasattr("freeze_encoder"):
+            # whisper-style models
+            model.freeze_encoder()
+        else:
+            raise ValueError("Method for freezing the base module of the audio encoder is not defined")
 
     # Initialize our trainer
     trainer = Trainer(
