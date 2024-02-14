@@ -87,7 +87,7 @@ Aggregate statistics from Step 2. Convert continuous values to discrete labels.
 
 Convert sequence of discrete labels to text description (using an LLM). 
 
-## Step 4: Train the Model
+## Step 5: Train the Model
 
 Train MusicGen-style model on the TTS task.
 
