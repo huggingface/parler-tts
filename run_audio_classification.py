@@ -35,7 +35,7 @@ from transformers import (
     HfArgumentParser,
     Trainer,
     TrainingArguments,
-    set_seed, WhisperForAudioClassification,
+    set_seed,
 )
 from transformers.models.whisper.tokenization_whisper import LANGUAGES
 from transformers.trainer_utils import get_last_checkpoint
@@ -165,7 +165,11 @@ class DataTrainingArguments:
     )
     max_length_seconds: float = field(
         default=20,
-        metadata={"help": "Audio clips will be randomly cut to this length during training if the value is set."},
+        metadata={"help": "Audio samples will be randomly cut to this length during training if the value is set."},
+    )
+    min_length_seconds: float = field(
+        default=5,
+        metadata={"help": "Audio samples less than this value will be filtered during training if the value is set."},
     )
     preprocessing_num_workers: Optional[int] = field(
         default=None,
@@ -197,7 +201,10 @@ class ModelArguments:
         default=None, metadata={"help": "Name or path of preprocessor config."}
     )
     freeze_feature_encoder: bool = field(
-        default=False, metadata={"help": "Whether to freeze the feature encoder layers of the model. Only relevant for Wav2Vec2-style models."}
+        default=False,
+        metadata={
+            "help": "Whether to freeze the feature encoder layers of the model. Only relevant for Wav2Vec2-style models."
+        },
     )
     freeze_base_model: bool = field(
         default=True, metadata={"help": "Whether to freeze the base encoder of the model."}
@@ -225,7 +232,7 @@ class ModelArguments:
         },
     )
     ignore_mismatched_sizes: bool = field(
-        default=False,
+        default=True,
         metadata={"help": "Will enable to load a pretrained model whose head dimensions are different."},
     )
 
@@ -535,6 +542,19 @@ def main():
         desc="Filtering by labels",
     )
 
+    # filter training data with inputs < min_input_length
+    min_input_length = data_args.min_length_seconds * sampling_rate
+
+    def is_audio_valid(audio):
+        return len(audio["array"]) > min_input_length
+
+    raw_datasets = raw_datasets.filter(
+        is_audio_valid,
+        input_columns=["audio"],
+        num_proc=data_args.preprocessing_num_workers,
+        desc="Filtering by audio length",
+    )
+
     # Prepare label mappings
     raw_datasets = raw_datasets.map(
         lambda label: {"labels": preprocess_labels(label)},
@@ -631,7 +651,8 @@ def main():
         if hasattr(model, "freeze_base_model"):
             # wav2vec2-style models
             model.freeze_base_model()
-            model.freeze_feature_encoder()
+            if hasattr(model, "freeze_feature_encoder"):
+                model.freeze_feature_encoder()
         elif hasattr(model, "freeze_encoder"):
             # whisper-style models
             model.freeze_encoder()
