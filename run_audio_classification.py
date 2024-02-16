@@ -57,19 +57,27 @@ def random_subsample(wav: np.ndarray, max_length: float, sample_rate: int = 1600
     return wav[random_offset : random_offset + sample_length]
 
 
+ACCENT_MAPPING = {
+    "British": "English",
+    "Canadian": "American",
+    "Northern irish": "Irish",
+    "New zealand": "Australian",
+    "Pakistani": "Indian",
+}
+
+
 def preprocess_labels(label: str) -> str:
     """Apply pre-processing formatting to the accent labels"""
     if "_" in label:
         # voxpopuli stylises the accent as a language code (e.g. en_pl for "polish") - convert to full accent
         language_code = label.split("_")[-1]
         label = LANGUAGES[language_code]
-    if label == "British":
-        # 1 speaker in VCTK is labelled as British instead of English - let's normalise
-        label = "English"
     # VCTK labels for two words are concatenated into one (NewZeleand-> New Zealand)
     label = re.sub(r"(\w)([A-Z])", r"\1 \2", label)
     # convert Whisper language code (polish) to capitalised (Polish)
     label = label.capitalize()
+    if label in ACCENT_MAPPING:
+        label = ACCENT_MAPPING[label]
     return label
 
 
