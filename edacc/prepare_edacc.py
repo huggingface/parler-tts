@@ -62,7 +62,7 @@ ACCENT_MAPPING = {
     "British": "English",
     "Romanian": "Romanian",
     "Standard Indian English": "Indian",
-    "Trans-Atlantic": "Unknown",
+    "Trans-Atlantic": "Irish",
     "Slightly American": "American",
     "European": "Unknown",
     "Scottish (Fife)": "Scottish",
