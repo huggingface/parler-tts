@@ -171,11 +171,11 @@ class DataTrainingArguments:
             )
         },
     )
-    max_length_seconds: float = field(
+    max_length_seconds: Optional[float] = field(
         default=20,
         metadata={"help": "Audio samples will be randomly cut to this length during training if the value is set."},
     )
-    min_length_seconds: float = field(
+    min_length_seconds: Optional[float] = field(
         default=5,
         metadata={"help": "Audio samples less than this value will be filtered during training if the value is set."},
     )
@@ -551,10 +551,11 @@ def main():
     )
 
     # filter training data with inputs < min_input_length
+    max_input_length = data_args.max_length_seconds * sampling_rate
     min_input_length = data_args.min_length_seconds * sampling_rate
 
     def is_audio_valid(audio):
-        return len(audio["array"]) > min_input_length
+        return max_input_length > len(audio["array"]) > min_input_length
 
     raw_datasets = raw_datasets.filter(
         is_audio_valid,
