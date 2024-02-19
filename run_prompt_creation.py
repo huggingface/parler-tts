@@ -81,13 +81,10 @@ class ModelArguments:
     use_fast_tokenizer: Optional[bool] = field(
         default=True, metadata={"help": "Use fast tokenizer for encoding/decoding input ids"}
     )
-    token: str = field(
-        default=None,
+    token: Optional[bool] = field(
+        default=True,
         metadata={
-            "help": (
-                "The token to use as HTTP bearer authorization for remote files. If not specified, will use the token "
-                "generated when running `huggingface-cli login` (stored in `~/.huggingface`)."
-            )
+            "help": "Whether or not to use an authentication token when loading/uploading from the Hugging Face Hub"
         },
     )
     do_sample: Optional[bool] = field(default=True, metadata={"help": "Whether to use sampling mode for generation"})
@@ -330,12 +327,12 @@ def main():
     PROMPT = """ We have seven keywords that describe different attributes of an audio sample spoken by a given speaker: the speaker's gender, the speaker's accent, the amount of reverberation in the sample (high or low reverberation), the amount of noise in the sample (how clear or noisy), how monotone or animated the sample is, the speaker's pitch (high or low voice), the speaker's speed (how fast or slow the speaker is speaking).
     Given these keywords, form a coherent sentence that summarises the seven attributes in a meaningful way. You can change the order of the keywords in the sentence and use common synonyms for these words, provided that the sentence summarises the attributes clearly. Keep the sentence simple - don't introduce additional information other than the keywords provided. Only return the generated sentence, not any other assistant remarks.
     For example, given the following descriptors: 'female', 'Hungarian', 'slightly roomy sounding', 'fairly noisy', 'quite monotone', 'fairly low pitch', 'very slowly', a valid sentence would be: 'a woman with a deep voice speaking slowly and somewhat monotonously with a Hungarian accent in an echoey room with background noise'. Note how the seven attributes have been combined together in a simple sentence, with the ordering changed but no additional information added.
-    For the descriptors: {gender}, {accent}, {reverberation}, {noise}, {speech_monotony}, {pitch}, {speaking_rate}, the corresponding sentence is:"""
+    For the descriptors: [gender], [accent], [reverberation], [noise], [speech_monotony], [pitch], [speaking_rate], the corresponding sentence is:"""
 
     SUBSET_PROMPT = """ We have six keywords that describe different attributes of an audio sample spoken by a given speaker: the speaker's gender, the amount of reverberation in the sample (high or low reverberation), the amount of noise in the sample (how clear or noisy), how monotone or animated the sample is, the speaker's pitch (high or low voice), the speaker's speed (how fast or slow the speaker is speaking).
     Given these keywords, form a coherent sentence that summarises the six attributes in a meaningful way. You can change the order of the keywords in the sentence and use common synonyms for these words, provided that the sentence summarises the attributes clearly. Keep the sentence simple - don't introduce additional information other than the keywords provided. Only return the generated sentence, not any other assistant remarks.
     For example, given the following descriptors: 'female', 'slightly roomy sounding', 'fairly noisy', 'quite monotone', 'fairly low pitch', 'very slowly', a valid sentence would be: 'a woman with a deep voice speaking slowly and somewhat monotonously in an echoey room with background noise'. Note how the six attributes have been combined together in a simple sentence, with the ordering changed but no additional information added.
-    For the descriptors: {gender}, {reverberation}, {noise}, {speech_monotony}, {pitch}, {speaking_rate}, the corresponding sentence is:"""
+    For the descriptors: [gender], [reverberation], [noise], [speech_monotony], [pitch], [speaking_rate], the corresponding sentence is:"""
 
     def prepare_dataset(sample):
         sample_prompt = SUBSET_PROMPT
@@ -396,12 +393,12 @@ def main():
                 with_indices=True,
             )
 
-    accelerator.end_training()
-
     if accelerator.is_main_process:
         vectorized_datasets.save_to_disk(data_args.output_dir)
         if data_args.push_to_hub:
-            vectorized_datasets.push_to_hub(data_args.hub_dataset_id)
+            vectorized_datasets.push_to_hub(data_args.hub_dataset_id, config_name=data_args.dataset_config_name, token=model_args.token)
+
+    accelerator.end_training()
 
 
 if __name__ == "__main__":
