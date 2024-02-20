@@ -513,9 +513,11 @@ def main():
     if training_args.do_eval:
         dataset_names_dict = convert_dataset_str_to_list(
             data_args.eval_dataset_name if data_args.eval_dataset_name else data_args.train_dataset_name,
-            data_args.eval_dataset_config_name
-            if data_args.eval_dataset_config_name
-            else data_args.train_dataset_config_name,
+            (
+                data_args.eval_dataset_config_name
+                if data_args.eval_dataset_config_name
+                else data_args.train_dataset_config_name
+            ),
             splits=data_args.eval_split_name,
             label_column_names=data_args.eval_label_column_name,
         )
