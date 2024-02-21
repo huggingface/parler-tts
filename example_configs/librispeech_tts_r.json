@@ -1,0 +1,63 @@
+{
+    "model_name_or_path": "ylacombe/musicgen-melody",
+
+    "push_to_hub": false,
+    "hub_model_id": "stable-speech-mini",
+    "report_to": ["wandb"],
+    "overwrite_output_dir": true,
+    "output_dir": "/home/yoach/dataspeech/artefacts/training/",
+
+    "train_dataset_name": "blabble-io/libritts_r+blabble-io/libritts_r+blabble-io/libritts_r",
+    "train_metadata_dataset_name": "stable-speech/libritts-r-tags-and-text-generated+stable-speech/libritts-r-tags-and-text-generated+stable-speech/libritts-r-tags-and-text-generated",
+    "train_dataset_config_name": "clean+clean+other",
+    "train_split_name": "train.clean.360+train.clean.100+train.other.500",
+
+    "eval_dataset_name": "blabble-io/libritts_r+blabble-io/libritts_r",
+    "eval_metadata_dataset_name": "stable-speech/libritts-r-tags-and-text-generated+stable-speech/libritts-r-tags-and-text-generated",
+    "eval_dataset_config_name": "clean+other",
+    "eval_split_name": "test.clean+test.other",
+
+    "target_audio_column_name": "audio", 
+    "description_column_name": "text",
+    "prompt_column_name": "text_description",
+
+    "max_train_samples": 1000,
+    "max_eval_samples": 200,
+
+    
+    "max_duration_in_seconds": 20,
+    "min_duration_in_seconds": 1.0,
+
+    "add_audio_samples_to_wandb": true,
+    "id_column_name": "id",
+
+    "preprocessing_num_workers": 24,
+
+    "pad_token_id": 2048,
+    "decoder_start_token_id": 2048,
+
+    "do_train": true,
+    "num_train_epochs": 20,
+    "gradient_accumulation_steps": 1,
+    "gradient_checkpointing": true,
+    "per_device_train_batch_size": 2,
+    "learning_rate": 1e-6,
+    "adam_beta1": 0.9,
+    "adam_beta2": 0.95,
+    "weight_decay": 0.1,
+
+    "logging_steps": 25,
+
+
+    "do_eval": true, 
+    "predict_with_generate": true,
+    "include_inputs_for_metrics": true,
+    "evaluation_strategy": "epoch",
+    "per_device_eval_batch_size": 2,
+    "generation_max_length": 400,
+
+    "fp16": true,
+    "seed": 456,
+
+    "dataloader_num_workers":8
+}
