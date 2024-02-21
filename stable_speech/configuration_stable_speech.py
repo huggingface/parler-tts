@@ -137,8 +137,8 @@ class StableSpeechConfig(PretrainedConfig):
     documentation from [`PretrainedConfig`] for more information.
 
     Args:
-        prompt_embed_dim (`int`, *optional*, defaults to 1024):
-            Dimensionality of the prompt embedding layer.
+        vocab_size (`int`, *optional*, defaults to 1024):
+            Vocabulary size of the prompt # TODO.
         kwargs (*optional*):
             Dictionary of keyword arguments. Notably:
 
@@ -189,7 +189,7 @@ class StableSpeechConfig(PretrainedConfig):
     model_type = "stable_speech"
     is_composition = True
 
-    def __init__(self, prompt_embed_dim=1024, **kwargs):
+    def __init__(self, vocab_size=1024, **kwargs):
         super().__init__(**kwargs)
         if "text_encoder" not in kwargs or "audio_encoder" not in kwargs or "decoder" not in kwargs:
             raise ValueError("Config has to be initialized with text_encoder, audio_encoder and decoder config")
@@ -202,7 +202,7 @@ class StableSpeechConfig(PretrainedConfig):
 
         decoder_config = kwargs.pop("decoder")
 
-        self.prompt_embed_dim = prompt_embed_dim
+        self.vocab_size = vocab_size
         self.text_encoder = AutoConfig.for_model(text_encoder_model_type, **text_encoder_config)
         self.audio_encoder = AutoConfig.for_model(audio_encoder_model_type, **audio_encoder_config)
         self.decoder = StableSpeechDecoderConfig(**decoder_config)

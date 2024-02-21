@@ -730,7 +730,6 @@ class StableSpeechDecoder(StableSpeechPreTrainedModel):
         # if prompt_hidden_states, fuse to inputs_embeds and update input shape
         if prompt_hidden_states is not None:
             inputs_embeds = torch.cat([prompt_hidden_states, inputs_embeds], dim=1)
-            input_shape = inputs_embeds.size()[:-1]
             
             # TODO: verify if prompt attention mask is required
             # As it is, the masked ids from the prompt will still count in the positions embeddings
@@ -740,9 +739,9 @@ class StableSpeechDecoder(StableSpeechPreTrainedModel):
                 logger.warning_once(
                     "`prompt_attention_mask` is specified but `attention_mask` is not. A full `attention_mask` will be created. Make sure this is the intended behaviour."
                 )
-                attention_mask = torch.cat([prompt_attention_mask, torch.ones(input_shape, device=self.device, dtype=prompt_attention_mask.dtype)])
+                attention_mask = torch.cat([prompt_attention_mask, torch.ones(input_shape, device=self.device, dtype=prompt_attention_mask.dtype)], dim=1)
                 
-
+        input_shape = inputs_embeds.size()[:-1]
         attention_mask = _prepare_4d_causal_attention_mask(
             attention_mask, input_shape, inputs_embeds, past_key_values_length
         )
@@ -1538,7 +1537,7 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
             self.enc_to_dec_proj = nn.Linear(self.text_encoder.config.hidden_size, self.decoder.config.hidden_size)
             
         # prompt embeddings
-        self.embed_prompts = nn.Embedding(config.prompt_embed_dim, self.decoder.config.hidden_size)
+        self.embed_prompts = nn.Embedding(config.vocab_size, self.decoder.config.hidden_size)
         
 
         if self.text_encoder.get_output_embeddings() is not None:
@@ -1557,7 +1556,7 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
         self.post_init()
         
     def _init_weights(self, module):
-        std = self.config.initializer_factor
+        std = self.decoder.config.initializer_factor
         if isinstance(module, (nn.Linear, nn.Conv1d)):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.bias is not None:
@@ -1787,7 +1786,8 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
                 )
 
             if "config" not in kwargs_decoder:
-                decoder_config, kwargs_decoder = AutoConfig.from_pretrained(
+                # TODO: reput AutoConfig once added to transformers
+                decoder_config, kwargs_decoder = StableSpeechDecoderConfig.from_pretrained(
                     decoder_pretrained_model_name_or_path, **kwargs_decoder, return_unused_kwargs=True
                 )
 
@@ -1923,7 +1923,7 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
 
         if (labels is not None) and (decoder_input_ids is None and decoder_inputs_embeds is None):
             decoder_input_ids = shift_tokens_right(
-                labels, self.config.pad_token_id, self.config.decoder_start_token_id
+                labels.transpose(1,2), self.config.pad_token_id, self.config.decoder_start_token_id
             )
 
         elif decoder_input_ids is None and decoder_inputs_embeds is None:
@@ -2190,7 +2190,7 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
         return model_kwargs
 
     def prepare_decoder_input_ids_from_labels(self, labels: torch.Tensor):
-        return shift_tokens_right(labels, self.config.pad_token_id, self.config.decoder_start_token_id)
+        return shift_tokens_right(labels.transpose(1,2), self.config.pad_token_id, self.config.decoder_start_token_id)
 
     def resize_token_embeddings(self, *args, **kwargs):
         # TODO: now it's possible with prompt_embeddings

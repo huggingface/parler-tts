@@ -30,7 +30,6 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Union
 
 import datasets
-import evaluate
 import numpy as np
 import torch
 from datasets import DatasetDict, load_dataset, Dataset, IterableDataset, interleave_datasets, concatenate_datasets
@@ -315,7 +314,7 @@ class DataSeq2SeqTrainingArguments:
 
     
 @dataclass
-class DataCollatorMusicGenWithPadding:
+class DataCollatorStableSpeechWithPadding:
     """
     Data collator that will dynamically pad the inputs received.
     Args:
@@ -360,16 +359,14 @@ class DataCollatorMusicGenWithPadding:
         input_ids = [{"input_ids": feature["input_ids"]} for feature in features]
         input_ids = self.description_tokenizer.pad(input_ids, return_tensors="pt", padding=self.padding, pad_to_multiple_of=self.pad_to_multiple_of)
 
+        batch= {"labels":labels, **input_ids}
+
         prompt_input_ids = [{"input_ids": feature["prompt_input_ids"]} for feature in features]
         prompt_input_ids = self.prompt_tokenizer.pad(prompt_input_ids, return_tensors="pt", padding=self.padding, pad_to_multiple_of=self.pad_to_multiple_of)
         
         batch["prompt_input_ids"] = prompt_input_ids["input_ids"]
         if "attention_mask" in prompt_input_ids:
             batch["prompt_attention_mask"] = prompt_input_ids["attention_mask"]
-                
-
-        batch= {"labels":labels, **input_ids}
-        
         
         if self.feature_extractor_input_name in features[0]:
             # TODO: verify that it works
@@ -485,29 +482,30 @@ def load_multiple_datasets(
                 **kwargs,
             )
                     
-            if id_column_name is not None and id_column_name not in dataset:
+            if id_column_name is not None and id_column_name not in dataset.column_names:
                 raise ValueError(
                     f"id_column_name={id_column_name} but has not been found in the dataset columns"
-                    f"- one of {', '.join(list(dataset.columns))}."
+                    f"- one of {', '.join(list(dataset.column_names))}."
                     )
-            if id_column_name is not None and id_column_name not in metadata_dataset:
+            if id_column_name is not None and id_column_name not in metadata_dataset.column_names:
                 raise ValueError(
                     f"id_column_name={id_column_name} but has not been found in the metadata dataset columns"
-                    f"- one of {', '.join(list(metadata_dataset.columns))}."
+                    f"- one of {', '.join(list(metadata_dataset.column_names))}."
                     )
             elif id_column_name is not None:
                 metadata_dataset = metadata_dataset.rename_column(id_column_name, f"metadata_{id_column_name}")
                 
             
-            metadata_columns_to_keep = set(metadata_dataset.columns).intersection(set(dataset.column_names))
-            metadata_dataset = metadata_dataset.remove_columns(set(metadata_dataset.columns)-metadata_columns_to_keep)
+            metadata_columns_to_remove = set(metadata_dataset.column_names).intersection(set(dataset.column_names))
+            metadata_dataset = metadata_dataset.remove_columns(metadata_columns_to_remove)
             dataset = concatenate_datasets([dataset, metadata_dataset], axis=1)
             
             if id_column_name is not None:
                 if len(dataset.filter(lambda id1, id2: id1!=id2, input_columns=[id_column_name, f"metadata_{id_column_name}"])) != 0:
-                    raise ValueError(f"Concatenate didn't work. Some ids don't correspond on dataset {dataset_dict["name"]}")
+                    raise ValueError(f"Concatenate didn't work. Some ids don't correspond on dataset {dataset_dict['name']}")
                 
-        
+            dataset_features = dataset.features.keys()
+
         if columns_to_keep is not None:
             dataset = dataset.remove_columns(set(dataset_features - columns_to_keep))
         all_datasets.append(dataset)
@@ -586,9 +584,14 @@ def main():
     # 1. First, let's load the dataset
     raw_datasets = DatasetDict()
     num_workers = data_args.preprocessing_num_workers
-
-    if training_args.do_train:
+    
+    columns_to_keep = [data_args.target_audio_column_name, data_args.prompt_column_name]
+    if data_args.description_column_name is not None:
+        columns_to_keep.append(data_args.description_column_name)
+    if data_args.conditional_audio_column_name is not None:
+        columns_to_keep.append(data_args.conditional_audio_column_name)
         
+    if training_args.do_train:
         raw_datasets["train"] = load_multiple_datasets(
             data_args.train_dataset_name,
             data_args.train_dataset_config_name,
@@ -597,10 +600,9 @@ def main():
             dataset_samples=data_args.train_dataset_samples,
             seed=training_args.seed,
             cache_dir=model_args.cache_dir,
-            token=True if model_args.token else None,
-            trust_remote_code=model_args.trust_remote_code,
             num_proc=data_args.preprocessing_num_workers,
             id_column_name=data_args.id_column_name,
+            columns_to_keep=columns_to_keep,
             # streaming=data_args.streaming, TODO(SG): optionally enable streaming mode
         )
 
@@ -645,10 +647,9 @@ def main():
             data_args.eval_metadata_dataset_name,
             splits=data_args.eval_split_name,
             cache_dir=model_args.cache_dir,
-            token=True if model_args.token else None,
-            trust_remote_code=model_args.trust_remote_code,
             num_proc=data_args.preprocessing_num_workers,
             id_column_name=data_args.id_column_name,
+            columns_to_keep=columns_to_keep,
             # streaming=data_args.streaming, TODO(SG): optionally enable streaming mode
         )
 
@@ -752,11 +753,11 @@ def main():
             
         if description_column_name is not None:
             text = batch[description_column_name]
-            batch["input_ids"] = description_tokenizer(text)["input_ids"]
+            batch["input_ids"] = description_tokenizer(text.strip())["input_ids"]
             
         if prompt_column_name is not None:
             text = batch[prompt_column_name]
-            batch["prompt_input_ids"] = prompt_tokenizer(text)["input_ids"]
+            batch["prompt_input_ids"] = prompt_tokenizer(text.strip())["input_ids"]
 
         # load audio
         target_sample = batch[target_audio_column_name]
@@ -878,8 +879,8 @@ def main():
             config.save_pretrained(training_args.output_dir)
 
     # Instantiate custom data collator
-    data_collator = DataCollatorMusicGenWithPadding(
-        feature_extractor=feature_extractor, feature_extractor_input_name=feature_extractor_input_name, prompt_tokenizer=prompt_tokenizer, description_tokenizer=description_tokenizer
+    data_collator = DataCollatorStableSpeechWithPadding(
+        audio_feature_extractor=feature_extractor, feature_extractor_input_name=feature_extractor_input_name, prompt_tokenizer=prompt_tokenizer, description_tokenizer=description_tokenizer
     )
     
     # Freeze Encoders
@@ -956,8 +957,9 @@ def main():
         # use last checkpoint if exist
         if last_checkpoint is not None:
             checkpoint = last_checkpoint
-        elif os.path.isdir(model_args.model_name_or_path):
-            checkpoint = model_args.model_name_or_path
+        # TODO: it's loading trainer from model_name_or_path doesn't work if saving config
+        # elif os.path.isdir(model_args.model_name_or_path):
+        #     checkpoint = model_args.model_name_or_path
         else:
             checkpoint = None
 
