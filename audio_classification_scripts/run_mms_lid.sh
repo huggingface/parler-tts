@@ -2,36 +2,37 @@
 
 python run_audio_classification.py \
     --model_name_or_path "facebook/mms-lid-126" \
-    --train_dataset_name "sanchit-gandhi/vctk+facebook/voxpopuli+sanchit-gandhi/edacc" \
-    --train_dataset_config_name "default+en_accented+default" \
-    --train_split_name "train+test+validation" \
-    --train_label_column_name "accent+accent+accent" \
-    --eval_dataset_name "sanchit-gandhi/edacc" \
+    --train_dataset_name "stable-speech/concatenated-accent-dataset" \
+    --train_dataset_config_name "default" \
+    --train_split_name "train" \
+    --train_label_column_name "labels" \
+    --eval_dataset_name "stable-speech/concatenated-accent-dataset" \
     --eval_dataset_config_name "default" \
     --eval_split_name "test" \
-    --eval_label_column_name "accent" \
+    --eval_label_column_name "labels" \
     --output_dir "./" \
     --do_train \
     --do_eval \
     --overwrite_output_dir \
     --remove_unused_columns False \
     --fp16 \
+    --fp16_full_eval \
     --learning_rate 1e-4 \
     --max_length_seconds 20 \
-    --attention_mask False \
-    --warmup_ratio 0.1 \
-    --num_train_epochs 5 \
+    --min_length_seconds 5 \
+    --attention_mask \
+    --warmup_steps 100 \
+    --max_steps 1000 \
     --per_device_train_batch_size 32 \
     --per_device_eval_batch_size 32 \
-    --preprocessing_num_workers 16 \
+    --preprocessing_num_workers 4 \
     --dataloader_num_workers 4 \
     --logging_strategy "steps" \
     --logging_steps 10 \
-    --evaluation_strategy "epoch" \
-    --save_strategy "epoch" \
-    --load_best_model_at_end True \
-    --metric_for_best_model "accuracy" \
-    --save_total_limit 3 \
-    --freeze_base_model \
-    --push_to_hub \
+    --evaluation_strategy "steps" \
+    --eval_steps 500 \
+    --save_strategy "steps" \
+    --save_steps 1000 \
+    --freeze_base_model False \
+    --push_to_hub False \
     --trust_remote_code

@@ -57,6 +57,13 @@ def random_subsample(wav: np.ndarray, max_length: float, sample_rate: int = 1600
     random_offset = randint(0, len(wav) - sample_length - 1)
     return wav[random_offset : random_offset + sample_length]
 
+def deterministic_subsample(wav: np.ndarray, max_length: float, sample_rate: int = 16000) -> np.ndarray:
+    """Take first `max_length` seconds from the input audio"""
+    sample_length = int(round(sample_rate * max_length))
+    if len(wav) <= sample_length:
+        return wav
+    return wav[0 : sample_length]
+
 
 ACCENT_MAPPING = {
     "British": "English",
@@ -603,26 +610,28 @@ def main():
         desc="Filtering by labels",
     )
 
+    def prepare_dataset(batch):
+        batch["length"] = len(batch["audio"]["array"])
+        batch["labels"] = preprocess_labels(batch["labels"])
+        return batch
+
+    raw_datasets = raw_datasets.map(
+        prepare_dataset,
+        num_proc=data_args.preprocessing_num_workers,
+        desc="Computing audio length",
+    )
+
     # filter training data with inputs < min_input_length
-    max_input_length = data_args.max_length_seconds * sampling_rate
     min_input_length = data_args.min_length_seconds * sampling_rate
 
-    def is_audio_valid(audio):
-        return max_input_length > len(audio["array"]) > min_input_length
+    def is_audio_valid(input_length):
+        return input_length > min_input_length
 
     raw_datasets = raw_datasets.filter(
         is_audio_valid,
-        input_columns=["audio"],
+        input_columns=["length"],
         num_proc=data_args.preprocessing_num_workers,
         desc="Filtering by audio length",
-    )
-
-    # Prepare label mappings
-    raw_datasets = raw_datasets.map(
-        lambda label: {"labels": preprocess_labels(label)},
-        input_columns=["labels"],
-        num_proc=data_args.preprocessing_num_workers,
-        desc="Pre-processing labels",
     )
 
     # Print a summary of the labels to the stddout (helps identify low-label classes that could be filtered)
@@ -664,9 +673,14 @@ def main():
 
     def train_transforms(batch):
         """Apply train_transforms across a batch."""
-        audios = [audio["array"] for audio in batch["audio"]]
+        subsampled_wavs = []
+        for audio in batch["audio"]:
+            wav = deterministic_subsample(
+                audio["array"], max_length=data_args.max_length_seconds, sample_rate=feature_extractor.sampling_rate
+            )
+            subsampled_wavs.append(wav)
         inputs = feature_extractor(
-            audios, return_attention_mask=model_args.attention_mask, sampling_rate=sampling_rate
+            subsampled_wavs, return_attention_mask=model_args.attention_mask, sampling_rate=sampling_rate
         )
         output_batch = {
             model_input_name: inputs.get(model_input_name),
