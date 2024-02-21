@@ -1,9 +1,9 @@
 from stable_speech import StableSpeechConfig, StableSpeechForCausalLM, StableSpeechForConditionalGeneration, StableSpeechDecoderConfig
 from transformers import T5Config, EncodecConfig
-
+from transformers import AutoConfig
 
 decoder_config = StableSpeechDecoderConfig(
-    max_position_embeddings=1024,
+    max_position_embeddings=2048,
     num_hidden_layers=2,
     ffn_dim=256,
     num_attention_heads=4,
@@ -24,11 +24,13 @@ decoder = StableSpeechForCausalLM(decoder_config)
 decoder.save_pretrained("/home/yoach/dataspeech/artefacts/decoder/")
 
 
+t5 = AutoConfig.from_pretrained("t5-base")
 
 model = StableSpeechForConditionalGeneration.from_sub_models_pretrained(
     text_encoder_pretrained_model_name_or_path="t5-base",
     audio_encoder_pretrained_model_name_or_path="facebook/encodec_32khz",
     decoder_pretrained_model_name_or_path="/home/yoach/dataspeech/artefacts/decoder/",
+    vocab_size = t5.vocab_size
 )
 
 # set the appropriate bos/pad token ids
