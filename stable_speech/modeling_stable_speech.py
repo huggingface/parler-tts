@@ -731,7 +731,7 @@ class StableSpeechDecoder(StableSpeechPreTrainedModel):
         if prompt_hidden_states is not None:
             inputs_embeds = torch.cat([prompt_hidden_states, inputs_embeds], dim=1)
             
-            # TODO: verify if prompt attention mask is required
+            # TODO: verify if prompt attention mask is required and has to be 
             # As it is, the masked ids from the prompt will still count in the positions embeddings
             if prompt_attention_mask is not None and attention_mask is not None:
                 attention_mask = torch.cat([prompt_attention_mask, attention_mask], dim=1)
@@ -754,6 +754,8 @@ class StableSpeechDecoder(StableSpeechPreTrainedModel):
             )
 
         # embed positions
+        # TODO: As it is, the masked ids from the prompt will still count in the positions embeddings
+        # maybe should modify position embeddings
         positions = self.embed_positions(inputs_embeds, past_key_values_length)
 
         hidden_states = inputs_embeds + positions.to(inputs_embeds.device)
@@ -1064,7 +1066,8 @@ class StableSpeechForCausalLM(StableSpeechPreTrainedModel):
         if delay_pattern_mask is None:
             input_ids, delay_pattern_mask = self.build_delay_pattern_mask(
                 input_ids,
-                pad_token_id=self.generation_config.pad_token_id,
+                bos_token_id=self.generation_config.decoder_start_token_id,
+                eos_token_id=self.generation_config.eos_token_id,
                 max_length=self.generation_config.max_length,
             )
 
@@ -1108,22 +1111,22 @@ class StableSpeechForCausalLM(StableSpeechPreTrainedModel):
         }
 
     # Ignore copy
-    def build_delay_pattern_mask(self, input_ids: torch.LongTensor, pad_token_id: int, max_length: int = None):
+    def build_delay_pattern_mask(self, input_ids: torch.LongTensor, bos_token_id: int, eos_token_id: int, max_length: int = None):
         """Build a delayed pattern mask to the input_ids. Each codebook is offset by the previous codebook by
         one, giving a delayed pattern mask at the start of sequence and end of sequence. Take the example where there
         are 4 codebooks and a max sequence length of 8, we have the delayed pattern mask of shape `(codebooks,
         seq_len)`:
-        - [P, -1, -1, -1, -1, P, P, P]
-        - [P, P, -1, -1, -1, -1, P, P]
-        - [P, P, P, -1, -1, -1, -1, P]
-        - [P, P, P, P, -1, -1, -1, -1]
-        where P is the special padding token id and -1 indicates that the token is valid for prediction. If we include
+        - [B, -1, -1, -1, -1, E, E, E]
+        - [B, B, -1, -1, -1, -1, E, E]
+        - [B, B, B, -1, -1, -1, -1, E]
+        - [B, B, B, B, -1, -1, -1, -1]
+        where B is the BOS token id, E is the EOS token id and -1 indicates that the token is valid for prediction. If we include
         a prompt (decoder input ids), the -1 positions indicate where new tokens should be predicted. Otherwise, the
         mask is set to the value in the prompt:
-        - [P, a, b, -1, -1, P, P, P]
-        - [P, P, c, d, -1, -1, P, P]
-        - [P, P, P, e, f, -1, -1, P]
-        - [P, P, P, P, g, h, -1, -1]
+        - [B, a, b, -1, -1, E, E, E]
+        - [B, B, c, d, -1, -1, E, E]
+        - [B, B, B, e, f, -1, -1, E]
+        - [B, B, B, B, g, h, -1, -1]
         where a-h indicate the input prompt (decoder input ids) that are offset by 1. Now, we only override the -1
         tokens in our prediction.
         """
@@ -1147,14 +1150,16 @@ class StableSpeechForCausalLM(StableSpeechPreTrainedModel):
 
         # construct a pattern mask that indicates the positions of padding tokens for each codebook
         # first fill the upper triangular part (the EOS padding)
-        delay_pattern = torch.triu(
+        eos_delay_pattern = torch.triu(
             torch.ones((num_codebooks, max_length), dtype=torch.bool), diagonal=max_length - num_codebooks + 1
         )
         # then fill the lower triangular part (the BOS padding)
-        delay_pattern = delay_pattern + torch.tril(torch.ones((num_codebooks, max_length), dtype=torch.bool))
+        bos_delay_pattern = torch.tril(torch.ones((num_codebooks, max_length), dtype=torch.bool))
 
-        mask = ~delay_pattern.to(input_ids.device)
-        input_ids = mask * input_ids_shifted + ~mask * pad_token_id
+        bos_mask = ~(bos_delay_pattern).to(input_ids.device)
+        eos_mask = ~(eos_delay_pattern).to(input_ids.device)
+        mask = ~(bos_delay_pattern + eos_delay_pattern).to(input_ids.device)
+        input_ids =  mask * input_ids_shifted + ~bos_mask * bos_token_id + ~eos_mask * eos_token_id
 
         # find the first position to start generating - this is the first place we have the -1 token
         # and will always be in the first codebook (since it has no codebook offset)
@@ -1334,7 +1339,8 @@ class StableSpeechForCausalLM(StableSpeechPreTrainedModel):
         # Build the delay pattern mask for offsetting each codebook prediction by 1 (this behaviour is specific to Stable Speech)
         input_ids, delay_pattern_mask = self.build_delay_pattern_mask(
             input_ids,
-            pad_token_id=generation_config.decoder_start_token_id,
+            bos_token_id=generation_config.decoder_start_token_id,
+            eos_token_id=generation_config.eos_token_id,
             max_length=generation_config.max_length,
         )
 
@@ -1436,9 +1442,9 @@ class StableSpeechForCausalLM(StableSpeechPreTrainedModel):
         # apply the pattern mask to the final ids
         output_ids = self.apply_delay_pattern_mask(output_ids, model_kwargs["delay_pattern_mask"])
 
-        # revert the pattern delay mask by filtering the pad token id
-        output_ids = output_ids[output_ids != generation_config.pad_token_id].reshape(
-            batch_size, self.num_codebooks, -1
+        # revert the pattern delay mask by filtering the eos and bos token ids from the delay pattern mask
+        output_ids = output_ids[(model_kwargs["delay_pattern_mask"] != generation_config.bos_token_id)&(model_kwargs["delay_pattern_mask"] != generation_config.eos_token_id)].reshape(
+            batch_size, self.decoder.num_codebooks, -1
         )
 
         if generation_config.return_dict_in_generate:
@@ -1919,7 +1925,7 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
         if prompt_hidden_states is None:
             if prompt_input_ids is not None:
                 prompt_hidden_states = self.embed_prompts(prompt_input_ids)
-            # TODO: do we do something with prompt_attention_mask ? e.g multiply it to prompt_hidden_states?
+            # TODO: verify prompt_attention_mask
 
         if (labels is not None) and (decoder_input_ids is None and decoder_inputs_embeds is None):
             decoder_input_ids = shift_tokens_right(
@@ -1999,7 +2005,8 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
         if decoder_delay_pattern_mask is None:
             decoder_input_ids, decoder_delay_pattern_mask = self.decoder.build_delay_pattern_mask(
                 decoder_input_ids,
-                self.generation_config.pad_token_id,
+                bos_token_id=self.generation_config.decoder_start_token_id,
+                eos_token_id=self.generation_config.eos_token_id,
                 max_length=self.generation_config.max_length,
             )
 
@@ -2428,7 +2435,8 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
         # build the delay pattern mask for offsetting each codebook prediction by 1 (this behaviour is specific to Stable Speech)
         input_ids, decoder_delay_pattern_mask = self.decoder.build_delay_pattern_mask(
             input_ids,
-            pad_token_id=generation_config.decoder_start_token_id,
+            bos_token_id=generation_config.decoder_start_token_id,
+            eos_token_id=generation_config.eos_token_id,
             max_length=generation_config.max_length,
         )
         # stash the delay mask so that we don't have to recompute in each forward pass
@@ -2531,8 +2539,8 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
         # apply the pattern mask to the final ids
         output_ids = self.decoder.apply_delay_pattern_mask(output_ids, model_kwargs["decoder_delay_pattern_mask"])
 
-        # revert the pattern delay mask by filtering the pad token id
-        output_ids = output_ids[output_ids != generation_config.pad_token_id].reshape(
+        # revert the pattern delay mask by filtering the eos and bos token ids from the delay pattern mask
+        output_ids = output_ids[(model_kwargs["decoder_delay_pattern_mask"] != generation_config.bos_token_id)&(model_kwargs["decoder_delay_pattern_mask"] != generation_config.eos_token_id)].reshape(
             batch_size, self.decoder.num_codebooks, -1
         )
 
@@ -2543,10 +2551,23 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
         if audio_scales is None:
             audio_scales = [None] * batch_size
 
-        output_values = self.audio_encoder.decode(
-            output_ids,
-            audio_scales=audio_scales,
-        ).audio_values
+        decode_in_batch = ((output_ids == generation_config.bos_token_id).sum() + (output_ids == generation_config.eos_token_id).sum()) == 0 
+        if decode_in_batch.item(): 
+            output_values = self.audio_encoder.decode(
+                output_ids,
+                audio_scales=audio_scales,
+            ).audio_values
+        else:
+            output_values = []
+            for sample_id in range(batch_size):
+                sample = output_ids[:, sample_id]
+                sample_mask = (((sample == generation_config.bos_token_id)|(sample == generation_config.eos_token_id)).sum(dim=(0,1)) == 0)
+                sample = sample[:, :, sample_mask]
+                sample = self.audio_encoder.decode(sample[None, ...], [audio_scales[sample_id]]).audio_values
+                output_values.append(sample.transpose(0,2))
+            # TODO: we should keep track of output length as well. Not really straightfoward tbh
+            output_values = torch.nn.utils.rnn.pad_sequence(output_values, batch_first=True, padding_value=0).transpose(1,2).squeeze(-1)
+                
 
         if generation_config.return_dict_in_generate:
             outputs.sequences = output_values

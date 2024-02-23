@@ -35,7 +35,8 @@ model = StableSpeechForConditionalGeneration.from_sub_models_pretrained(
 
 # set the appropriate bos/pad token ids
 model.generation_config.decoder_start_token_id = 2048
-model.generation_config.pad_token_id = 2048
+model.generation_config.pad_token_id = 2049
+model.generation_config.eos_token_id = 2049
 
 # set other default generation config params
 model.generation_config.max_length = int(30 * model.audio_encoder.config.frame_rate)

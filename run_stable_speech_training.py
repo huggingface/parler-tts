@@ -77,16 +77,10 @@ def list_field(default=None, metadata=None):
 
 class StableSpeechTrainer(Seq2SeqTrainer):
     def _pad_tensors_to_max_len(self, tensor, max_length):
-        if self.tokenizer is not None and hasattr(self.tokenizer, "pad_token_id"):
-            # If PAD token is not defined at least EOS token has to be defined
-            pad_token_id = (
-                self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id
-            )
+        if self.model.config.pad_token_id is not None:
+            pad_token_id = self.model.config.pad_token_id
         else:
-            if self.model.config.pad_token_id is not None:
-                pad_token_id = self.model.config.pad_token_id
-            else:
-                raise ValueError("Pad_token_id must be set in the configuration of the model, in order to pad tensors")
+            raise ValueError("Pad_token_id must be set in the configuration of the model, in order to pad tensors")
 
         padded_tensor = pad_token_id * torch.ones(
             (tensor.shape[0], max_length, tensor.shape[2]), dtype=tensor.dtype, device=tensor.device
@@ -387,6 +381,7 @@ class DataCollatorStableSpeechWithPadding:
         prompt_input_ids = [{"input_ids": feature["prompt_input_ids"]} for feature in features]
         prompt_input_ids = self.prompt_tokenizer.pad(prompt_input_ids, return_tensors="pt", padding=self.padding, pad_to_multiple_of=self.pad_to_multiple_of)
         
+        # TODO: check it's been padded on the left
         batch["prompt_input_ids"] = prompt_input_ids["input_ids"]
         if "attention_mask" in prompt_input_ids:
             batch["prompt_attention_mask"] = prompt_input_ids["attention_mask"]
@@ -676,6 +671,7 @@ def main():
     )
     
     # update pad token id and decoder_start_token_id
+    # TODO: verify if this makes sense, maybe should do it for model.decoder
     config.update({
         "pad_token_id": model_args.pad_token_id if model_args.pad_token_id is not None else model.config.pad_token_id,
         "decoder_start_token_id": model_args.decoder_start_token_id if model_args.decoder_start_token_id is not None else model.config.decoder_start_token_id,
@@ -700,6 +696,7 @@ def main():
         token=data_args.token,
         trust_remote_code=data_args.trust_remote_code,
         use_fast=model_args.use_fast_tokenizer,
+        padding_side="left", # prompt has to be padded on the left bc it's preprend to codebooks hidden states
     )
         
     # load description tokenizer
@@ -740,6 +737,10 @@ def main():
     description_column_name = data_args.description_column_name
     prompt_column_name = data_args.prompt_column_name
     feature_extractor_input_name = feature_extractor.model_input_names[0]
+    audio_encoder_eos_token_id = config.decoder.pad_token_id
+    audio_encoder_bos_token_id = model.generation_config.decoder_start_token_id
+    max_length = model.generation_config.max_length
+    num_codebooks = model.decoder.config.num_codebooks
     
     # resample target audio
     raw_datasets = raw_datasets.cast_column(
@@ -794,7 +795,6 @@ def main():
     
     # no need to prepare audio_decoder because used for inference without mixed precision
     # see: https://huggingface.co/docs/accelerate/main/en/package_reference/accelerator#accelerate.Accelerator.prepare
-    # TODO: load another model
     audio_decoder = model.audio_encoder
 
     encoder_data_collator = DataCollatorEncodecWithPadding(feature_extractor, feature_extractor_input_name)
@@ -832,18 +832,28 @@ def main():
             all_ratios.extend(generate_labels["ratio"].cpu())
             all_lens.extend(generate_labels["len_audio"].cpu())
             
+        # (1, codebooks, seq_len) where seq_len=1
+        eos_labels = torch.ones((1, num_codebooks, 1)) * audio_encoder_eos_token_id
+            
         def postprocess_dataset(sample, idx):
-            # (1, seq_len, codebooks, bsz)
+            # (1, codebooks, seq_len)
             labels = all_generated_labels[idx].transpose(0,1).unsqueeze(0)
+            len_ = int(all_ratios[idx] * all_lens[idx])
+            labels = labels[:, :, :len_]
+            
+            # add eos token column
+            labels = torch.cat([labels, eos_labels.to(labels.device).to(labels.dtype)], dim=-1)
+            
+            
             labels, delay_pattern_mask = model.decoder.build_delay_pattern_mask(labels, 
-                                                    model.generation_config.decoder_start_token_id, 
-                                                    model.generation_config.max_length + model.decoder.config.num_codebooks)
+                                                    audio_encoder_bos_token_id, 
+                                                    audio_encoder_eos_token_id,
+                                                    max_length + num_codebooks)
             
             labels = model.decoder.apply_delay_pattern_mask(labels, delay_pattern_mask)
-            len_ = int(all_ratios[idx] * all_lens[idx])
 
             # the first timestamp is associated to a row full of BOS, let's get rid of it
-            sample["labels"] = labels[:, 1:len_]
+            sample["labels"] = labels[:, 1:]
             return sample
 
         # TODO: done multiple times, how to deal with it.
@@ -956,7 +966,7 @@ def main():
             """Custom WandbCallback to log model predictions during training.
             """
 
-            def __init__(self, trainer, val_dataset,
+            def __init__(self, trainer, val_dataset, description_tokenizer, # TODO: add
                         num_samples=8):
                 """Initializes the WandbPredictionProgressCallback instance.
 
@@ -969,6 +979,7 @@ def main():
                 """
                 super().__init__()
                 self.trainer = trainer
+                self.description_tokenizer = description_tokenizer
                 self.sample_dataset = val_dataset.select(range(num_samples))
 
             def on_train_end(self, args, state, control, **kwargs):
@@ -992,6 +1003,7 @@ def main():
         progress_callback = WandbPredictionProgressCallback(
             trainer=trainer,
             val_dataset=vectorized_datasets["eval"],
+            description_tokenizer=description_tokenizer,
             num_samples=8, # TODO: add to args
         )
 
