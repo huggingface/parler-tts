@@ -2,11 +2,11 @@
 
 python run_audio_classification.py \
     --model_name_or_path "facebook/mms-lid-126" \
-    --train_dataset_name "stable-speech/concatenated-accent-dataset" \
+    --train_dataset_name "stable-speech/concatenated-normalized-accent-dataset" \
     --train_dataset_config_name "default" \
     --train_split_name "train" \
     --train_label_column_name "labels" \
-    --eval_dataset_name "stable-speech/concatenated-accent-dataset" \
+    --eval_dataset_name "stable-speech/concatenated-normalized-accent-dataset" \
     --eval_dataset_config_name "default" \
     --eval_split_name "test" \
     --eval_label_column_name "labels" \
@@ -22,7 +22,7 @@ python run_audio_classification.py \
     --min_length_seconds 5 \
     --attention_mask \
     --warmup_steps 100 \
-    --max_steps 1000 \
+    --max_steps 2000 \
     --per_device_train_batch_size 32 \
     --per_device_eval_batch_size 32 \
     --preprocessing_num_workers 4 \
@@ -31,8 +31,8 @@ python run_audio_classification.py \
     --logging_steps 10 \
     --evaluation_strategy "steps" \
     --eval_steps 500 \
-    --save_strategy "steps" \
-    --save_steps 1000 \
-    --freeze_base_model False \
+    --save_strategy "no" \
+    --save_steps 2000 \
+    --freeze_base_model True \
     --push_to_hub False \
     --trust_remote_code
