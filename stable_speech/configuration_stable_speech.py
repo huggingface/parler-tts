@@ -38,7 +38,7 @@ class StableSpeechDecoderConfig(PretrainedConfig):
 
 
     Args:
-        vocab_size (`int`, *optional*, defaults to 2049):
+        vocab_size (`int`, *optional*, defaults to 2050):
             Vocabulary size of the StableSpeechDecoder model. Defines the number of different tokens that can be
             represented by the `inputs_ids` passed when calling [`StableSpeechDecoder`].
         hidden_size (`int`, *optional*, defaults to 1024):
@@ -81,7 +81,7 @@ class StableSpeechDecoderConfig(PretrainedConfig):
 
     def __init__(
         self,
-        vocab_size=2049, # vocab size = 2048 (encodec vocab size) + 1 (eos token)
+        vocab_size=2050, # vocab size = 2048 (encodec vocab size) + 2 (bos, eos)
         max_position_embeddings=2048,
         num_hidden_layers=24,
         ffn_dim=4096,
@@ -96,7 +96,7 @@ class StableSpeechDecoderConfig(PretrainedConfig):
         initializer_factor=0.02,
         scale_embedding=False,
         num_codebooks=4,
-        pad_token_id=2049,
+        pad_token_id=2050,
         bos_token_id=2048,
         eos_token_id=2049,
         tie_word_embeddings=False,

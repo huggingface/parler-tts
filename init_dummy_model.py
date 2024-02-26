@@ -4,16 +4,16 @@ from transformers import AutoConfig
 
 decoder_config = StableSpeechDecoderConfig(
     max_position_embeddings=2048,
-    num_hidden_layers=2,
-    ffn_dim=256,
-    num_attention_heads=4,
+    num_hidden_layers=4,
+    ffn_dim=512,
+    num_attention_heads=8,
     layerdrop=0.0,
     use_cache=True,
     activation_function="gelu",
-    hidden_size=256,
-    dropout=0.1,
-    attention_dropout=0.1,
-    activation_dropout=0.1,
+    hidden_size=512,
+    dropout=0.0,
+    attention_dropout=0.0,
+    activation_dropout=0.0,
 )
 # TODO: ?? how to make it stop ?
         
@@ -35,12 +35,12 @@ model = StableSpeechForConditionalGeneration.from_sub_models_pretrained(
 
 # set the appropriate bos/pad token ids
 model.generation_config.decoder_start_token_id = 2048
-model.generation_config.pad_token_id = 2049
+model.generation_config.pad_token_id = 2050
 model.generation_config.eos_token_id = 2049
 
 # set other default generation config params
 model.generation_config.max_length = int(30 * model.audio_encoder.config.frame_rate)
-model.generation_config.do_sample = True
-model.generation_config.guidance_scale = 3.0
+model.generation_config.do_sample = False # True
+model.generation_config.guidance_scale = 1 # 3.0
 
 model.save_pretrained("/home/yoach/dataspeech/artefacts/tiny-model/")

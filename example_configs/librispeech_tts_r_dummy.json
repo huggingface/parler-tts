@@ -10,22 +10,22 @@
     "overwrite_output_dir": true,
     "output_dir": "/home/yoach/dataspeech/artefacts/training/",
 
-    "train_dataset_name": "blabble-io/libritts_r+blabble-io/libritts_r+blabble-io/libritts_r",
-    "train_metadata_dataset_name": "stable-speech/libritts-r-tags-and-text-generated+stable-speech/libritts-r-tags-and-text-generated+stable-speech/libritts-r-tags-and-text-generated",
-    "train_dataset_config_name": "clean+clean+other",
-    "train_split_name": "train.clean.360+train.clean.100+train.other.500",
+    "train_dataset_name": "blabble-io/libritts_r",
+    "train_metadata_dataset_name": "stable-speech/libritts-r-tags-and-text-generated",
+    "train_dataset_config_name": "clean",
+    "train_split_name": "train.clean.360",
 
-    "eval_dataset_name": "blabble-io/libritts_r+blabble-io/libritts_r",
-    "eval_metadata_dataset_name": "stable-speech/libritts-r-tags-and-text-generated+stable-speech/libritts-r-tags-and-text-generated",
-    "eval_dataset_config_name": "clean+other",
-    "eval_split_name": "test.clean+test.other",
+    "eval_dataset_name": "blabble-io/libritts_r",
+    "eval_metadata_dataset_name": "stable-speech/libritts-r-tags-and-text-generated",
+    "eval_dataset_config_name": "clean",
+    "eval_split_name": "train.clean.360",
 
     "target_audio_column_name": "audio", 
     "description_column_name": "text_description",
     "prompt_column_name": "text",
 
-    "max_train_samples": 20,
-    "max_eval_samples": 10,
+    "max_train_samples": 12,
+    "max_eval_samples": 12,
 
     
     "max_duration_in_seconds": 30,
@@ -40,10 +40,10 @@
     "decoder_start_token_id": 2048,
 
     "do_train": true,
-    "num_train_epochs": 120,
+    "num_train_epochs": 20,
     "gradient_accumulation_steps": 1,
     "gradient_checkpointing": false,
-    "per_device_train_batch_size": 2,
+    "per_device_train_batch_size": 3,
     "learning_rate": 1e-3,
     "adam_beta1": 0.9,
     "adam_beta2": 0.999,
@@ -53,7 +53,6 @@
     "warmup_ratio":  0.1,
 
 
-    "logging_steps": 1,
     "freeze_text_encoder": true,
 
 
@@ -61,11 +60,14 @@
     "predict_with_generate": true,
     "include_inputs_for_metrics": true,
     "evaluation_strategy": "steps",
-    "eval_steps": 600,
-    "per_device_eval_batch_size": 8,
+    "eval_steps": 10,
+    "per_device_eval_batch_size": 3,
     "generation_max_length": 400,
+    "do_sample": true,
 
-    "fp16": false,
+    "logging_steps": 15,
+
+    "dtype": "float32",
     "seed": 456,
 
     "dataloader_num_workers":8
