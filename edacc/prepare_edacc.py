@@ -83,10 +83,10 @@ def main():
 
     # 2. Clean accents for each speaker
     linguistic_background_clean = {
-        participant: accent for participant, accent in zip(accent_dataset["speaker_id"], accent_dataset["English_Variety"])
+        participant: accent.strip() for participant, accent in zip(accent_dataset["speaker_id"], accent_dataset["English_Variety"])
     }
     linguistic_variety = {
-        participant: l1 for participant, l1 in zip(accent_dataset["speaker_id"], accent_dataset["L1_Variety"])
+        participant: l1.strip() for participant, l1 in zip(accent_dataset["speaker_id"], accent_dataset["L1_Variety"])
     }
 
     # 3. Initialize dataset dict
