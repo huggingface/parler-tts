@@ -1,6 +1,6 @@
 {
     "model_name_or_path": "/home/yoach/dataspeech/artefacts/tiny-model/",
-    "feature_extractor_name":"facebook/encodec_24khz",
+    "feature_extractor_name":"facebook/encodec_32khz",
     "description_tokenizer_name":"t5-base",
     "prompt_tokenizer_name":"t5-base",
 

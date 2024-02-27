@@ -31,7 +31,7 @@ import evaluate
 from tqdm import tqdm
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Set
 
 import datasets
 import numpy as np
@@ -606,7 +606,7 @@ def load_multiple_datasets(
     streaming: Optional[bool] = False,
     seed: Optional[int] = None,
     id_column_name: Optional[str] = None,
-    columns_to_keep: Optional[set[str]] = None,
+    columns_to_keep: Optional[Set[str]] = None,
     **kwargs,
 ) -> Union[Dataset, IterableDataset]:
     dataset_names_dict = convert_dataset_str_to_list(
@@ -1396,9 +1396,8 @@ def main():
                             # Gather all predictions and targets
                             # TODO: also add prompt ids
                             # TODO: better gather
-                            generated_audios, input_ids, prompts = accelerator.gather_for_metrics(
-                                (generated_audios, batch["input_ids"], batch["prompt_input_ids"])
-                            )
+                            generated_audios, input_ids, prompts = accelerator.pad_across_processes((generated_audios, batch["input_ids"], batch["prompt_input_ids"]), dim=1, pad_index=0) 
+                            generated_audios, input_ids, prompts =accelerator.gather_for_metrics((generated_audios, input_ids, prompts))
                             eval_preds.extend(generated_audios)
                             eval_descriptions.extend(input_ids)
                             eval_prompts.extend(prompts)
