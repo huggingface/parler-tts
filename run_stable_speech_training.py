@@ -26,6 +26,8 @@ import shutil
 import warnings
 import math
 import time
+from multiprocess import set_start_method
+
 
 import evaluate
 from tqdm import tqdm
@@ -63,7 +65,7 @@ from accelerate import Accelerator
 from accelerate.utils import set_seed
 
 
-from stable_speech import StableSpeechForConditionalGeneration, StableSpeechConfig
+from stable_speech import StableSpeechForConditionalGeneration, StableSpeechConfig, apply_delay_pattern_mask, build_delay_pattern_mask
 
 if is_wandb_available():
     from wandb import Audio
@@ -516,15 +518,10 @@ class DataCollatorStableSpeechWithPadding:
         # (bsz, seq_len, num_codebooks)
         labels = torch.nn.utils.rnn.pad_sequence(labels,batch_first=True,padding_value=-100)
         
-        delay_pattern_mask = [torch.tensor(feature["label_delay_pattern_mask"]).transpose(0,1) for feature in features]
-        # (bsz, seq_len, num_codebooks)
-        delay_pattern_mask = torch.nn.utils.rnn.pad_sequence(delay_pattern_mask,batch_first=True,padding_value=-100)
-        
-        
         input_ids = [{"input_ids": feature["input_ids"]} for feature in features]
         input_ids = self.description_tokenizer.pad(input_ids, return_tensors="pt", padding=self.padding, pad_to_multiple_of=self.pad_to_multiple_of)
 
-        batch= {"labels":labels, "label_delay_pattern_mask":delay_pattern_mask, **input_ids}
+        batch= {"labels":labels, **input_ids}
 
         prompt_input_ids = [{"input_ids": feature["prompt_input_ids"]} for feature in features]
         prompt_input_ids = self.prompt_tokenizer.pad(prompt_input_ids, return_tensors="pt", padding=self.padding, pad_to_multiple_of=self.pad_to_multiple_of)
@@ -1014,23 +1011,30 @@ def main():
             len_ = int(all_ratios[idx] * all_lens[idx])
             labels = labels[:, :, :len_]
             
-            # TODO: remove, only for test
-            labels = labels[:, :, :(len_)%10+20]
+            labels = labels[:, :, :(len_)%10+20] # TODO: change
             
-            # add bos and eos token column
-            labels = torch.cat([bos_labels,labels, eos_labels.to(labels.device).to(labels.dtype)], dim=-1)
+            # add bos
+            labels = torch.cat([bos_labels, labels], dim=-1)
             
-            
-            labels, delay_pattern_mask = model.decoder.build_delay_pattern_mask(labels, 
+            labels, delay_pattern_mask = build_delay_pattern_mask(labels, 
                                                     bos_token_id=audio_encoder_bos_token_id,
-                                                    pad_token_id=audio_encoder_pad_token_id,
-                                                    max_length=labels.shape[-1] + num_codebooks)
+                                                    pad_token_id=audio_encoder_eos_token_id,
+                                                    max_length=labels.shape[-1] + num_codebooks,
+                                                    num_codebooks=num_codebooks)
             
-            labels = model.decoder.apply_delay_pattern_mask(labels, delay_pattern_mask)
-
+            
+            # the first ids of the delay pattern mask are precisely labels, we use the rest of the labels mask
+            # to take care of EOS
+            # we want labels to look like this:
+            #  - [B, a, b, E, E, E, E]
+            #  - [B, B, c, d, E, E, E]
+            #  - [B, B, B, e, f, E, E]
+            #  - [B, B, B, B, g, h, E] 
+            labels = torch.where(delay_pattern_mask==-1, audio_encoder_eos_token_id, delay_pattern_mask)
+                        
             # the first timestamp is associated to a row full of BOS, let's get rid of it
-            sample["labels"] = labels[:, 1:]
-            sample["label_delay_pattern_mask"] = delay_pattern_mask[:, 1:]
+            # we also remove the last timestampts (full of PAD)
+            sample["labels"] = labels[:, 1:].cpu()
             return sample
 
         # TODO: done multiple times, how to deal with it.
@@ -1047,12 +1051,6 @@ def main():
     del generate_labels
 
     
-    if data_args.add_audio_samples_to_wandb and "wandb" in training_args.report_to:
-        if is_wandb_available():
-            from transformers.integrations import WandbCallback
-        else:
-            raise ValueError("`args.add_audio_samples_to_wandb=True` but wandb is not installed. See https://docs.wandb.ai/quickstart to install.")
-        
 
     # for large datasets it is advised to run the preprocessing on a
     # single machine first with ``args.preprocessing_only`` since there will mostly likely
@@ -1467,4 +1465,5 @@ def main():
 
 
 if __name__ == "__main__":
+    set_start_method("spawn")
     main()

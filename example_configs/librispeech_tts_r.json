@@ -36,8 +36,8 @@
 
     "preprocessing_num_workers": 1,
 
-    "pad_token_id": 2050,
-    "decoder_start_token_id": 2048,
+    "pad_token_id": 2048,
+    "decoder_start_token_id": 2049,
 
     "do_train": true,
     "num_train_epochs": 120,

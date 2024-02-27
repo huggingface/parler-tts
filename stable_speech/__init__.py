@@ -1,2 +1,2 @@
 from .configuration_stable_speech import StableSpeechConfig, StableSpeechDecoderConfig
-from .modeling_stable_speech import StableSpeechForCausalLM, StableSpeechForConditionalGeneration
+from .modeling_stable_speech import StableSpeechForCausalLM, StableSpeechForConditionalGeneration, apply_delay_pattern_mask, build_delay_pattern_mask
