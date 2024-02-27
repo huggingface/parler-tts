@@ -442,6 +442,14 @@ class StableSpeechTrainingArguments(Seq2SeqTrainingArguments):
             )
         },
     )
+    audio_encode_per_device_eval_batch_size: int = field(
+        default=8,
+        metadata={
+            "help": (
+                "TODO"
+            )
+        },
+    )
     
 @dataclass
 class DataCollatorEncodecWithPadding:
@@ -965,7 +973,8 @@ def main():
     def apply_audio_decoder(batch):
         len_audio = batch.pop("len_audio")
         audio_decoder.to(batch["input_values"].device).eval()
-        labels = audio_decoder.encode(**batch)["audio_codes"]
+        with torch.no_grad():
+            labels = audio_decoder.encode(**batch)["audio_codes"]
         output = {}
         output["len_audio"] = len_audio
         # (1, bsz, codebooks, seq_len) -> (bsz, seq_len, codebooks)
@@ -976,7 +985,7 @@ def main():
     for split in vectorized_datasets:
         data_loader = DataLoader(
             vectorized_datasets[split],
-            batch_size=training_args.per_device_eval_batch_size,
+            batch_size=training_args.audio_encode_per_device_eval_batch_size,
             collate_fn=encoder_data_collator,
             num_workers=training_args.dataloader_num_workers,
             pin_memory=True,
