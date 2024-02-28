@@ -212,6 +212,7 @@ class StableSpeechSinusoidalPositionalEmbedding(nn.Module):
         position_ids = (torch.arange(seq_len) + past_key_values_length).to(input_ids.device)
         # expand embeddings if needed
         if seq_len > self.weights.size(0):
+            # TODO: doesn't work
             self.make_weights(seq_len + self.offset, self.embedding_dim)
         return self.weights.index_select(0, position_ids.view(-1)).detach()
 
@@ -2620,7 +2621,7 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
                 else:
                     output_values.append(torch.zeros((1,1,1)).to(self.device))
             # TODO: we should keep track of output length as well. Not really straightfoward tbh
-            output_values = torch.nn.utils.rnn.pad_sequence(output_values, batch_first=True, padding_value=0).transpose(1,2).squeeze(-1).squeeze(1)
+            output_values = torch.nn.utils.rnn.pad_sequence(output_values, batch_first=True, padding_value=0).squeeze(-1).squeeze(-1)
                 
 
         if generation_config.return_dict_in_generate:
