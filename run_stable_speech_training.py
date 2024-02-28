@@ -257,7 +257,7 @@ class ModelArguments:
         metadata={"help": "Whether to do sampling or greedy decoding."},
     )
     bandwidth: float = field(
-        default=3, # TODO
+        default=6, # TODO
         metadata={"help": "Audio encoder bandwidth."},
     )
     

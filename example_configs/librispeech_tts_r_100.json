@@ -1,14 +1,14 @@
 {
-    "model_name_or_path": "/raid/yoach/tmp/small-stable-speech-untrained/",
-    "feature_extractor_name":"facebook/encodec_32khz",
-    "description_tokenizer_name":"t5-base",
-    "prompt_tokenizer_name":"t5-base",
+    "model_name_or_path": "/raid/yoach/tmp/artefacts/small-stable-speech-untrained/",
+    "feature_extractor_name":"facebook/encodec_24khz",
+    "description_tokenizer_name":"google-t5/t5-small",
+    "prompt_tokenizer_name":"google-t5/t5-small",
 
-    "push_to_hub": false,
-    "hub_model_id": "stable-speech-mini",
+    "push_to_hub": true,
+    "hub_model_id": "ylacombe/stable-speech-mini",
     "report_to": ["wandb"],
     "overwrite_output_dir": true,
-    "output_dir": "/raid/yoach/tmp/artefacts/training/",
+    "output_dir": "/raid/yoach/tmp/artefacts/training-mini/",
 
 
     "train_dataset_name": "blabble-io/libritts_r",
@@ -28,22 +28,24 @@
 
     "max_eval_samples": 24,
     
-    "max_duration_in_seconds": 32,
+    "max_duration_in_seconds": 29,
     "min_duration_in_seconds": 2.0,
 
     "add_audio_samples_to_wandb": true,
     "id_column_name": "id",
 
-    "preprocessing_num_workers": 8,
+    "preprocessing_num_workers": 1,
 
-    "pad_token_id": 2050,
-    "decoder_start_token_id": 2048,
+
+    "pad_token_id": 1024,
+    "decoder_start_token_id": 1025,
+
 
     "do_train": true,
-    "num_train_epochs": 200,
+    "num_train_epochs": 15,
     "gradient_accumulation_steps": 1,
-    "gradient_checkpointing": false,
-    "per_device_train_batch_size": 50,
+    "gradient_checkpointing": true,
+    "per_device_train_batch_size": 40,
     "learning_rate": 1e-4,
     "adam_beta1": 0.9,
     "adam_beta2": 0.999,
@@ -61,11 +63,13 @@
     "predict_with_generate": true,
     "include_inputs_for_metrics": true,
     "evaluation_strategy": "steps",
-    "eval_steps": 600,
+    "eval_steps": 3000,
+    "save_steps": 3000,
+
     "per_device_eval_batch_size": 8,
     "generation_max_length": 400,
 
-    "audio_encode_per_device_eval_batch_size":24,
+    "audio_encode_per_device_eval_batch_size":32,
     "dtype": "float16",
     "seed": 456,
 
