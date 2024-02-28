@@ -90,4 +90,5 @@ Convert sequence of discrete labels to text description (using an LLM).
 ## Step 5: Train the Model
 
 Train MusicGen-style model on the TTS task.
+Needs DAC.
 

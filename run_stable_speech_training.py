@@ -60,6 +60,12 @@ from transformers.optimization import get_scheduler
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 from transformers.integrations import is_wandb_available
+from transformers import AutoConfig, AutoModel
+from stable_speech import DACConfig, DACModel
+
+AutoConfig.register("dac", DACConfig)
+AutoModel.register(DACConfig, DACModel)
+
 
 from accelerate import Accelerator
 from accelerate.utils import set_seed
