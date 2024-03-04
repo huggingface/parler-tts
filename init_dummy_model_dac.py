@@ -1,6 +1,6 @@
 from stable_speech import StableSpeechConfig, StableSpeechForCausalLM, StableSpeechForConditionalGeneration, StableSpeechDecoderConfig
-from transformers import T5Config, EncodecConfig
 from transformers import AutoConfig
+from transformers import AutoModel
 
 
 from transformers import AutoConfig, AutoModel
@@ -13,7 +13,6 @@ text_model = "google-t5/t5-small"
 encodec_version = "ylacombe/dac_44khZ_8kbps"
 num_codebooks = 9
 
-
 t5 = AutoConfig.from_pretrained(text_model)
 encodec = AutoConfig.from_pretrained(encodec_version)
 
@@ -22,14 +21,14 @@ encodec_vocab_size = encodec.codebook_size
 
 decoder_config = StableSpeechDecoderConfig(
     vocab_size=encodec_vocab_size+1,
-    max_position_embeddings=3000, # 30 s = 2580
-    num_hidden_layers=12,
-    ffn_dim=4096,
-    num_attention_heads=16,
+    max_position_embeddings=2048,
+    num_hidden_layers=4,
+    ffn_dim=512,
+    num_attention_heads=8,
     layerdrop=0.0,
     use_cache=True,
     activation_function="gelu",
-    hidden_size=1024,
+    hidden_size=512,
     dropout=0.0,
     attention_dropout=0.0,
     activation_dropout=0.0,
@@ -38,11 +37,13 @@ decoder_config = StableSpeechDecoderConfig(
     bos_token_id=encodec_vocab_size+1,
     num_codebooks=num_codebooks,
 )
+# TODO: ?? how to make it stop ?
+        
 
         
 decoder = StableSpeechForCausalLM(decoder_config)
-decoder.save_pretrained("/raid/yoach/tmp/artefacts/decoder/")
 
+decoder.save_pretrained("/raid/yoach/tmp/artefacts/decoder/")
 
 
 
@@ -63,5 +64,4 @@ model.generation_config.max_length = int(30 * model.audio_encoder.config.frame_r
 model.generation_config.do_sample = False # True
 model.generation_config.guidance_scale = 1 # 3.0
 
-
-model.save_pretrained("/raid/yoach/tmp/artefacts/small-stable-speech-untrained/")
+model.save_pretrained("/raid/yoach/tmp/artefacts/tiny-dac-model/")

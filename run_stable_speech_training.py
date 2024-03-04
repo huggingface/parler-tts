@@ -397,7 +397,8 @@ class DataTrainingArguments:
                 "Whether to only do data preprocessing and skip training. This is especially useful when data"
                 " preprocessing errors out in distributed training due to timeout. In this case, one should run the"
                 " preprocessing in a non-distributed setup with `preprocessing_only=True` so that the cached datasets"
-                " can consequently be loaded in distributed training"
+                " can consequently be loaded in distributed training."
+                " In this training script, `save_to_disk` must be set to the path in which the dataset should be saved. "
             )
         },
     )
@@ -441,6 +442,12 @@ class DataTrainingArguments:
     wandb_project: str = field(
         default="stable-speech",
         metadata={"help": "The name of the wandb project."},
+    )
+    save_to_disk: str = field(
+        default=None,
+        metadata={
+            "help": "If set, will save the dataset to this path if this is an empyt folder. If not empty, will load the datasets from it."
+        }
     )
     
 @dataclass
@@ -781,61 +788,70 @@ def main():
 
     # Set seed before initializing model.
     set_seed(training_args.seed)
+    num_workers = data_args.preprocessing_num_workers
 
     # 1. First, let's load the dataset
-    raw_datasets = DatasetDict()
-    num_workers = data_args.preprocessing_num_workers
     
-    columns_to_keep = {
-        "target_audio_column_name": data_args.target_audio_column_name,
-        "prompt_column_name": data_args.prompt_column_name
-    }
-    if data_args.description_column_name is not None:
-        columns_to_keep["description_column_nam"] = data_args.description_column_name
-        
-    if training_args.do_train:
-        raw_datasets["train"] = load_multiple_datasets(
-            accelerator,
-            data_args.train_dataset_name,
-            data_args.train_dataset_config_name,
-            metadata_dataset_names=data_args.train_metadata_dataset_name,
-            splits=data_args.train_split_name,
-            dataset_samples=data_args.train_dataset_samples,
-            seed=training_args.seed,
-            cache_dir=model_args.cache_dir,
-            num_proc=data_args.preprocessing_num_workers,
-            id_column_name=data_args.id_column_name,
-            columns_to_keep=columns_to_keep.values(),
-            # streaming=data_args.streaming, TODO(SG): optionally enable streaming mode
-        )
-        
-        for key in columns_to_keep:
-            if columns_to_keep[key] not in raw_datasets["train"].column_names:
-                raise ValueError(
-                    f"--{key} '{columns_to_keep[key]}' not found in dataset '{data_args.train_dataset_name}'."
-                    f" Make sure to set `--{key}` to the correct audio column - one of"
-                    f" {', '.join(raw_datasets['train'].column_names)}."
-                )        
+    if data_args.save_to_disk is not None:
+        os.makedirs(data_args.save_to_disk, exist_ok=True)
+    
+    # assume that the dataset has been saved to `save_to_disk` if the latter is not empty
+    dataset_was_precomputed = len(os.listdir(data_args.save_to_disk)) > 0
+    if dataset_was_precomputed:
+        vectorized_datasets = datasets.load_from_disk(data_args.save_to_disk)
+    else:    
+        raw_datasets = DatasetDict()
 
-        if data_args.max_train_samples is not None:
-            raw_datasets["train"] = raw_datasets["train"].select(range(data_args.max_train_samples))
+        columns_to_keep = {
+            "target_audio_column_name": data_args.target_audio_column_name,
+            "prompt_column_name": data_args.prompt_column_name
+        }
+        if data_args.description_column_name is not None:
+            columns_to_keep["description_column_nam"] = data_args.description_column_name
+            
+        if training_args.do_train:
+            raw_datasets["train"] = load_multiple_datasets(
+                accelerator,
+                data_args.train_dataset_name,
+                data_args.train_dataset_config_name,
+                metadata_dataset_names=data_args.train_metadata_dataset_name,
+                splits=data_args.train_split_name,
+                dataset_samples=data_args.train_dataset_samples,
+                seed=training_args.seed,
+                cache_dir=model_args.cache_dir,
+                num_proc=data_args.preprocessing_num_workers,
+                id_column_name=data_args.id_column_name,
+                columns_to_keep=columns_to_keep.values(),
+                # streaming=data_args.streaming, TODO(SG): optionally enable streaming mode
+            )
+            
+            for key in columns_to_keep:
+                if columns_to_keep[key] not in raw_datasets["train"].column_names:
+                    raise ValueError(
+                        f"--{key} '{columns_to_keep[key]}' not found in dataset '{data_args.train_dataset_name}'."
+                        f" Make sure to set `--{key}` to the correct audio column - one of"
+                        f" {', '.join(raw_datasets['train'].column_names)}."
+                    )        
 
-    if training_args.do_eval:
-        raw_datasets["eval"] = load_multiple_datasets(
-            accelerator,
-            data_args.eval_dataset_name if data_args.eval_dataset_name else data_args.train_dataset_name,
-            data_args.eval_dataset_config_name if data_args.eval_dataset_config_name else data_args.train_dataset_config_name,
-            metadata_dataset_names=data_args.eval_metadata_dataset_name,
-            splits=data_args.eval_split_name,
-            cache_dir=model_args.cache_dir,
-            num_proc=data_args.preprocessing_num_workers,
-            id_column_name=data_args.id_column_name,
-            columns_to_keep=columns_to_keep.values(),
-            # streaming=data_args.streaming, TODO(SG): optionally enable streaming mode
-        )
+            if data_args.max_train_samples is not None:
+                raw_datasets["train"] = raw_datasets["train"].select(range(data_args.max_train_samples))
 
-        if data_args.max_eval_samples is not None:
-            raw_datasets["eval"] = raw_datasets["eval"].select(range(data_args.max_eval_samples))
+        if training_args.do_eval:
+            raw_datasets["eval"] = load_multiple_datasets(
+                accelerator,
+                data_args.eval_dataset_name if data_args.eval_dataset_name else data_args.train_dataset_name,
+                data_args.eval_dataset_config_name if data_args.eval_dataset_config_name else data_args.train_dataset_config_name,
+                metadata_dataset_names=data_args.eval_metadata_dataset_name,
+                splits=data_args.eval_split_name,
+                cache_dir=model_args.cache_dir,
+                num_proc=data_args.preprocessing_num_workers,
+                id_column_name=data_args.id_column_name,
+                columns_to_keep=columns_to_keep.values(),
+                # streaming=data_args.streaming, TODO(SG): optionally enable streaming mode
+            )
+
+            if data_args.max_eval_samples is not None:
+                raw_datasets["eval"] = raw_datasets["eval"].select(range(data_args.max_eval_samples))
 
 
     # 2. Next, let's load the config as we might need it to create
@@ -921,160 +937,164 @@ def main():
     num_codebooks = model.decoder.config.num_codebooks
     bandwidth = model_args.bandwidth
     
-    # resample target audio
-    raw_datasets = raw_datasets.cast_column(
-        target_audio_column_name, datasets.features.Audio(sampling_rate=sampling_rate)
-    )
-    
-
-    # Preprocessing the datasets.
-    # We need to read the audio files as arrays and tokenize the texts.
-    def pass_through_processors(batch):
-        # load audio
-        if description_column_name is not None:
-            text = batch[description_column_name]
-            batch["input_ids"] = description_tokenizer(text.strip())["input_ids"]
-            
-        if prompt_column_name is not None:
-            text = batch[prompt_column_name]
-            batch["prompt_input_ids"] = prompt_tokenizer(text.strip())["input_ids"]
-
-        # load audio
-        target_sample = batch[target_audio_column_name]
-        labels = feature_extractor(target_sample["array"], sampling_rate=target_sample["sampling_rate"])
-        batch["labels"] = labels["input_values"]
+    if not dataset_was_precomputed:
+        # resample target audio
+        raw_datasets = raw_datasets.cast_column(
+            target_audio_column_name, datasets.features.Audio(sampling_rate=sampling_rate)
+        )
         
-        # take length of raw audio waveform
-        batch["target_length"] = len(target_sample["array"].squeeze())
-        return batch
 
-    with accelerator.main_process_first():
-        vectorized_datasets = raw_datasets.map(
-            pass_through_processors,
-            remove_columns=next(iter(raw_datasets.values())).column_names,
-            num_proc=num_workers,
-            desc="preprocess datasets",
-        )
+        # Preprocessing the datasets.
+        # We need to read the audio files as arrays and tokenize the texts.
+        def pass_through_processors(batch):
+            # load audio
+            if description_column_name is not None:
+                text = batch[description_column_name]
+                batch["input_ids"] = description_tokenizer(text.strip())["input_ids"]
+                
+            if prompt_column_name is not None:
+                text = batch[prompt_column_name]
+                batch["prompt_input_ids"] = prompt_tokenizer(text.strip())["input_ids"]
 
-        def is_audio_in_length_range(length):
-            return length > min_target_length and length < max_target_length
-
-        # filter data that is shorter than min_target_length
-        vectorized_datasets = vectorized_datasets.filter(
-            is_audio_in_length_range,
-            num_proc=num_workers,
-            input_columns=["target_length"],
-        )
-
-
-    # 5. Now we encode the audio labels with encodec.
-    # We use Accelerate to perform distributed inference
-
-    logger.info("*** Encode target audio with encodec ***")
-    
-    # no need to prepare audio_decoder because used for inference without mixed precision
-    # see: https://huggingface.co/docs/accelerate/main/en/package_reference/accelerator#accelerate.Accelerator.prepare
-    audio_decoder = model.audio_encoder
-
-    encoder_data_collator = DataCollatorEncodecWithPadding(feature_extractor, feature_extractor_input_name)
-
-    def apply_audio_decoder(batch):
-        len_audio = batch.pop("len_audio")
-        audio_decoder.to(batch["input_values"].device).eval()
-        with torch.no_grad():
-            labels = audio_decoder.encode(**batch, bandwidth=bandwidth)["audio_codes"]
-        output = {}
-        output["len_audio"] = len_audio
-        # (1, bsz, codebooks, seq_len) -> (bsz, seq_len, codebooks)
-        output["labels"] = labels.squeeze(0).transpose(1,2)
-        output["ratio"] = torch.ones_like(len_audio) * labels.shape[-1] / len_audio.max() 
-        return output
-
-    for split in vectorized_datasets:
-        data_loader = DataLoader(
-            vectorized_datasets[split],
-            batch_size=training_args.audio_encode_per_device_eval_batch_size,
-            collate_fn=encoder_data_collator,
-            num_workers=training_args.dataloader_num_workers,
-            pin_memory=True,
-        )
-        data_loader = accelerator.prepare(data_loader)        
-        
-        all_generated_labels = []
-        all_ratios = []
-        all_lens = []
-        for batch in tqdm(data_loader, disable=not accelerator.is_local_main_process):
-            generate_labels = apply_audio_decoder(batch)
-            generate_labels = accelerator.pad_across_processes(generate_labels, dim=1, pad_index=0)
-            generate_labels = accelerator.gather_for_metrics(generate_labels)
+            # load audio
+            target_sample = batch[target_audio_column_name]
+            labels = feature_extractor(target_sample["array"], sampling_rate=target_sample["sampling_rate"])
+            batch["labels"] = labels["input_values"]
             
-            all_generated_labels.extend(generate_labels["labels"].cpu())
-            all_ratios.extend(generate_labels["ratio"].cpu())
-            all_lens.extend(generate_labels["len_audio"].cpu())
-            
-        # (1, codebooks, seq_len) where seq_len=1
-        eos_labels = torch.ones((1, num_codebooks, 1)) * audio_encoder_eos_token_id
-        bos_labels = torch.ones((1, num_codebooks, 1)) * audio_encoder_bos_token_id
-            
-        def postprocess_dataset(input_ids, prompt_input_ids, idx):
-            # (1, codebooks, seq_len)
-            labels = all_generated_labels[idx].transpose(0,1).unsqueeze(0)
-            len_ = int(all_ratios[idx] * all_lens[idx])
-            labels = labels[:, :, :len_]
-            
-            # labels = labels[:, :, :(len_)%10+500] # TODO: change
-            
-            # add bos
-            labels = torch.cat([bos_labels, labels], dim=-1)
-            
-            labels, delay_pattern_mask = build_delay_pattern_mask(labels, 
-                                                    bos_token_id=audio_encoder_bos_token_id,
-                                                    pad_token_id=audio_encoder_eos_token_id,
-                                                    max_length=labels.shape[-1] + num_codebooks,
-                                                    num_codebooks=num_codebooks)
-            
-            
-            # the first ids of the delay pattern mask are precisely labels, we use the rest of the labels mask
-            # to take care of EOS
-            # we want labels to look like this:
-            #  - [B, a, b, E, E, E, E]
-            #  - [B, B, c, d, E, E, E]
-            #  - [B, B, B, e, f, E, E]
-            #  - [B, B, B, B, g, h, E] 
-            labels = torch.where(delay_pattern_mask==-1, audio_encoder_eos_token_id, delay_pattern_mask)
-                        
-            # the first timestamp is associated to a row full of BOS, let's get rid of it
-            # we also remove the last timestampts (full of PAD)
-            output = {"labels": labels[:, 1:].cpu()}
-            output["input_ids"] = input_ids
-            output["prompt_input_ids"] = prompt_input_ids
-            return output
+            # take length of raw audio waveform
+            batch["target_length"] = len(target_sample["array"].squeeze())
+            return batch
 
-        # TODO: done multiple times, how to deal with it.
         with accelerator.main_process_first():
-            vectorized_datasets[split] = vectorized_datasets[split].map(
-                postprocess_dataset,
+            vectorized_datasets = raw_datasets.map(
+                pass_through_processors,
+                remove_columns=next(iter(raw_datasets.values())).column_names,
                 num_proc=num_workers,
-                input_columns=["input_ids", "prompt_input_ids"],
-                desc="Postprocessing labeling",
-                with_indices=True,
-                writer_batch_size=200,
+                desc="preprocess datasets",
             )
 
+            def is_audio_in_length_range(length):
+                return length > min_target_length and length < max_target_length
+
+            # filter data that is shorter than min_target_length
+            vectorized_datasets = vectorized_datasets.filter(
+                is_audio_in_length_range,
+                num_proc=num_workers,
+                input_columns=["target_length"],
+            )
+
+        # 5. Now we encode the audio labels with encodec.
+        # We use Accelerate to perform distributed inference
+
+        logger.info("*** Encode target audio with encodec ***")
+        
+        # no need to prepare audio_decoder because used for inference without mixed precision
+        # see: https://huggingface.co/docs/accelerate/main/en/package_reference/accelerator#accelerate.Accelerator.prepare
+        audio_decoder = model.audio_encoder
+
+        encoder_data_collator = DataCollatorEncodecWithPadding(feature_extractor, feature_extractor_input_name)
+
+        def apply_audio_decoder(batch):
+            len_audio = batch.pop("len_audio")
+            audio_decoder.to(batch["input_values"].device).eval()
+            with torch.no_grad():
+                labels = audio_decoder.encode(**batch, bandwidth=bandwidth)["audio_codes"]
+            output = {}
+            output["len_audio"] = len_audio
+            # (1, bsz, codebooks, seq_len) -> (bsz, seq_len, codebooks)
+            output["labels"] = labels.squeeze(0).transpose(1,2)
+            output["ratio"] = torch.ones_like(len_audio) * labels.shape[-1] / len_audio.max() 
+            return output
+
+        for split in vectorized_datasets:
+            data_loader = DataLoader(
+                vectorized_datasets[split],
+                batch_size=training_args.audio_encode_per_device_eval_batch_size,
+                collate_fn=encoder_data_collator,
+                num_workers=training_args.dataloader_num_workers,
+                pin_memory=True,
+            )
+            data_loader = accelerator.prepare(data_loader)        
             
-    accelerator.free_memory()
-    del generate_labels
+            all_generated_labels = []
+            all_ratios = []
+            all_lens = []
+            for batch in tqdm(data_loader, disable=not accelerator.is_local_main_process):
+                generate_labels = apply_audio_decoder(batch)
+                generate_labels = accelerator.pad_across_processes(generate_labels, dim=1, pad_index=0)
+                generate_labels = accelerator.gather_for_metrics(generate_labels)
+                
+                all_generated_labels.extend(generate_labels["labels"].cpu())
+                all_ratios.extend(generate_labels["ratio"].cpu())
+                all_lens.extend(generate_labels["len_audio"].cpu())
+                
+            # (1, codebooks, seq_len) where seq_len=1
+            eos_labels = torch.ones((1, num_codebooks, 1)) * audio_encoder_eos_token_id
+            bos_labels = torch.ones((1, num_codebooks, 1)) * audio_encoder_bos_token_id
+                
+            def postprocess_dataset(input_ids, prompt_input_ids, idx):
+                # (1, codebooks, seq_len)
+                labels = all_generated_labels[idx].transpose(0,1).unsqueeze(0)
+                len_ = int(all_ratios[idx] * all_lens[idx])
+                labels = labels[:, :, :len_]
+                
+                # labels = labels[:, :, :(len_)%10+500] # TODO: change
+                
+                # add bos
+                labels = torch.cat([bos_labels, labels], dim=-1)
+                
+                labels, delay_pattern_mask = build_delay_pattern_mask(labels, 
+                                                        bos_token_id=audio_encoder_bos_token_id,
+                                                        pad_token_id=audio_encoder_eos_token_id,
+                                                        max_length=labels.shape[-1] + num_codebooks,
+                                                        num_codebooks=num_codebooks)
+                
+                
+                # the first ids of the delay pattern mask are precisely labels, we use the rest of the labels mask
+                # to take care of EOS
+                # we want labels to look like this:
+                #  - [B, a, b, E, E, E, E]
+                #  - [B, B, c, d, E, E, E]
+                #  - [B, B, B, e, f, E, E]
+                #  - [B, B, B, B, g, h, E] 
+                labels = torch.where(delay_pattern_mask==-1, audio_encoder_eos_token_id, delay_pattern_mask)
+                            
+                # the first timestamp is associated to a row full of BOS, let's get rid of it
+                # we also remove the last timestampts (full of PAD)
+                output = {"labels": labels[:, 1:].cpu()}
+                output["input_ids"] = input_ids
+                output["prompt_input_ids"] = prompt_input_ids
+                return output
+
+            # TODO: done multiple times, how to deal with it.
+            with accelerator.main_process_first():
+                vectorized_datasets[split] = vectorized_datasets[split].map(
+                    postprocess_dataset,
+                    num_proc=1, # this one is resource consuming if many processor.
+                    input_columns=["input_ids", "prompt_input_ids"],
+                    desc="Postprocessing labeling",
+                    with_indices=True,
+                    writer_batch_size=200,
+                )
+
+                
+        accelerator.free_memory()
+        del generate_labels
 
     
+    if data_args.save_to_disk is not None and not dataset_was_precomputed:
+        vectorized_datasets.save_to_disk(data_args.save_to_disk)
+        logger.info(f"Dataset saved at {data_args.save_to_disk}")
 
     # for large datasets it is advised to run the preprocessing on a
     # single machine first with ``args.preprocessing_only`` since there will mostly likely
     # be a timeout when running the script in distributed mode.
     # In a second step ``args.preprocessing_only`` can then be set to `False` to load the
     # cached dataset
-    if data_args.preprocessing_only:
-        # TODO: save to disk in this step instead of something else ??
-        logger.info(f"Data preprocessing finished. Files cached at {vectorized_datasets.cache_files}")
+    if data_args.preprocessing_only and data_args.save_to_disk is None:
+        raise ValueError("`preprocessing_only=True` but `save_to_disk` is not set. The latter should indicates where to save the dataset locally.")
+    elif data_args.preprocessing_only:
+        logger.info(f"Data preprocessing finished. Files save at {data_args.save_to_disk}")
         return
     
     
