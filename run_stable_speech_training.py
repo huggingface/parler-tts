@@ -1389,10 +1389,8 @@ def main():
 
                         if cur_step == total_train_steps:
                             # un-wrap student model for save
-                            model = accelerator.unwrap_model(model)
-                            model.save_pretrained(training_args.output_dir)
-                            # re-wrap student model for final eval
-                            model = accelerator.prepare(model)
+                            unwrapped_model = accelerator.unwrap_model(model)
+                            unwrapped_model.save_pretrained(training_args.output_dir)
 
                         if training_args.push_to_hub:
                             repo.push_to_hub(
