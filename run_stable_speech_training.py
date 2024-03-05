@@ -1426,7 +1426,7 @@ def main():
                         vectorized_datasets["eval"],
                         collate_fn=data_collator,
                         batch_size=per_device_eval_batch_size,
-                        drop_last=True,
+                        drop_last=False,
                         num_workers=training_args.dataloader_pin_memory,
                         pin_memory=training_args.dataloader_pin_memory,
                     )
@@ -1458,7 +1458,7 @@ def main():
                     eval_time = time.time() - eval_start
                     # normalize eval metrics
                     eval_metrics = {
-                        key: torch.mean(torch.stack([d[key] for d in eval_metrics])) for key in eval_metrics[0]
+                        key: torch.mean(torch.cat([d[key].unsqueeze(0) for d in eval_metrics])) for key in eval_metrics[0]
                     }
 
                     # compute metrics
