@@ -1279,10 +1279,18 @@ def main():
 
         for epoch in range(0, epochs_trained):
             vectorized_datasets["train"] = vectorized_datasets["train"].shuffle(training_args.seed)
-
+            
         if training_args.max_steps < 0:
             # we know exactly the number of steps per epoch, so can skip through the required number of batches
-            resume_step = (cur_step - epochs_trained * steps_per_epoch) * gradient_accumulation_steps
+            resume_step = (cur_step - epochs_trained * steps_per_epoch)
+            
+            # TODO: currently broken
+            
+            if resume_step == round(len(vectorized_datasets["train"])/train_batch_size):
+                resume_step = None
+                vectorized_datasets["train"] = vectorized_datasets["train"].shuffle(training_args.seed)       
+                epochs_trained += 1        
+    
         else:
             # Currently we don't know how many steps we've taken in the current epoch
             # So we just shuffle the dataset one extra time and start from a fresh epoch
@@ -1412,7 +1420,7 @@ def main():
                         vectorized_datasets["eval"],
                         collate_fn=data_collator,
                         batch_size=per_device_eval_batch_size,
-                        drop_last=False,
+                        drop_last=True,
                         num_workers=training_args.dataloader_pin_memory,
                         pin_memory=training_args.dataloader_pin_memory,
                     )
