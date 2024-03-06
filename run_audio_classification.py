@@ -57,21 +57,22 @@ def random_subsample(wav: np.ndarray, max_length: float, sample_rate: int = 1600
     random_offset = randint(0, len(wav) - sample_length - 1)
     return wav[random_offset : random_offset + sample_length]
 
+
 def deterministic_subsample(wav: np.ndarray, max_length: float, sample_rate: int = 16000) -> np.ndarray:
     """Take first `max_length` seconds from the input audio"""
     sample_length = int(round(sample_rate * max_length))
     if len(wav) <= sample_length:
         return wav
-    return wav[0 : sample_length]
+    return wav[0:sample_length]
 
 
 ACCENT_MAPPING = {
     "British": "English",
-    "Canadian": "American",
+    # "Canadian": "American",
     "Northern irish": "Irish",
-    "New zealand": "Australian",
+    # "New zealand": "Australian",
     "Pakistani": "Indian",
-    "Mainstream us english": "American",
+    "Mainstream u s english": "American",
     "Southern british english": "English",
     "Indian english": "Indian",
     "Scottish english": "Scottish",
@@ -83,10 +84,150 @@ ACCENT_MAPPING = {
     "Indonesian english": "Indonesian",
     "South african english": "South african",
     "Irish english": "Irish",
-    "Latin": "Latin American",
+    "Latin": "Latin american",
     "European": "Unknown",  # Too general
-    "Eastern european": "Eastern european", # TODO(SG): keep for now, but maybe remove later
+    "Eastern european": "Eastern european",  # TODO(SG): keep for now, but maybe remove later as too general
+    "Bangladeshi": "Indian",
+    "England": "English",
+    "India": "Indian",
+    "Afrikaans": "South african",
+    "California": "American",
+    "Nepali": "Indian",
+    "New york city": "American",
+    "New jerseyan": "American",
+    "Northumbrian british english": "English",
+    "Nottinghamshire,east midlands": "English",
+    "Southern african": "South african",
+    "United states english": "American",
+    "West indies": "Jamaican",
+    "2nd language": "Unknown",  # Too vague
+    "A savage texas gentleman": "American",
+    "A variety of texan english with some german influence that has undergone the cot-caught merger": "American",
+    "A'lo": "Unknown",  # Unclear
+    "Academic southern english,england english": "English",
+    "Argentinian english": "Latin american",
+    "Austrian": "German",
+    "Bangladesh,india and south asia (india, pakistan, sri lanka)": "Indian",
+    "Brazillian accent": "Brazilian",
+    "British accent": "English",
+    "Caribbean canadian": "Unknown",  # Specific combination not listed
+    "Colombian accent": "Latin american",
+    "Czech accent": "Czech",
+    "East african khoja": "Unknown",  # Specific community
+    "East indian": "Indian",
+    "East london": "English",
+    "England,london,academic": "English",
+    "Filipino": "Unknown",  # Unique blend
+    "Fluent,e sl,european": "Unknown",  # Too vague
+    "Generic european": "Unknown",  # Too vague
+    "Georgian english": "Unknown",  # No direct match
+    "Ghanaian english accent,african regular reader": "Unknown",  # Specific category not listed
+    "Haitian creole": "Unknown",  # Unique blend
+    "Hispanic": "Latin american",
+    "Hispanic/latino": "Latin american",
+    "Hong kong english": "Chinese",
+    "Hong kong english,scottish english": "Chinese",
+    "Hunglish": "Hungarian",
+    "I think mine accent is influenced by indian accent ,yes please. ,india and south asia (india, pakistan, sri lanka)": "Indian",
+    "I was born in england and have lived in australia, canada and france.": "English",
+    "International english,united states english,australian english": "American",
+    "Israeli": "Unknown",  # No direct match
+    "Israeli english": "Unknown",  # No direct match
+    "Javanese,indonesian english,malaysian english": "Indonesian",
+    "Kazakhstan english": "Unknown",  # No direct match
+    "Kiwi": "New zealand",  # Could be generalised to Australian
+    "Latin america,united states english": "Latin american",
+    "Latin american accent": "Latin american",
+    "Latin english": "Unknown",  # Too vague
+    "Latino": "Latin american",
+    "Latvian": "Latvian",  # Note: added new
+    "Little latino,united states english,second language": "Latin american",
+    "Liverpool english,lancashire english,england english": "English",
+    "Liverpudlian english": "English",
+    "Malaysian english": "Malaysian",  # Note: added new
+    "Mexican accent": "Latin american",
+    "Mid-atlantic united states english,philadelphia, pennsylvania, united states english,united states english,philadelphia style united states english": "American",
+    "Mid-atlantic,england english,united states english": "American",
+    "Midatlantic,england english": "American",
+    "Midwestern states (michigan),united states english": "American",
+    "Mild northern england english": "English",
+    "Minor french accent": "French",
+    "Mix of american and british ,native polish": "Polish",
+    "Mix of american and british accent": "Unknown",  # Combination not clearly mapped
+    "Mostly american with some british and australian inflections": "Unknown",  # Combination not clearly mapped
+    "My accent is influenced by the phones of all letters within a sentence.,southern african (south africa, zimbabwe, namibia)": "South african",
+    "New zealand english": "New Zealand English",
+    "Nigeria english": "Nigerian",  # Note: added new
+    "Non native speaker from france": "French",
+    "Non-native": "Unknown",  # Too vague
+    "Non-native,german accent": "German",
+    "North european english": "Unknown",  # Too broad
+    "Norwegian": "Norwegian",  # Note: added new
+    "Ontario,canadian english": "Canadian",  # Note: added new
+    "Polish english": "Polish",
+    "Rhode island new england accent": "American",
+    "Singaporean english": "Singaporean",  # Note: added new
+    "Slavic": "Eastern european",
+    "Slighty southern affected by decades in the midwest, 4 years in spain and germany, speak some german, spanish, polish. have lived in nine states.": "Unknown",  # Complex blend
+    "South african": "South african",
+    "South atlantic (falkland islands, saint helena)": "Unknown",  # Specific regions not listed
+    "South australia": "Australian",
+    "South indian": "Indian",
+    "Southern drawl": "American",
+    "Southern texas accent,united states english": "American",
+    "Southern united states,united states english": "American",
+    "Spanish bilingual": "Spanish",
+    "Spanish,foreign,non-native": "Spanish",
+    "Strong latvian accent": "Latvian",
+    "Swedish accent": "Swedish",  # Note: added new
+    "Transnational englishes blend": "Unknown",  # Too vague
+    "U.k. english": "English",
+    "Very slight russian accent,standard american english,boston influence": "American",
+    "Welsh english": "Welsh",
+    "West african": "Unknown",  # No specific West African category
+    "West indian": "Unknown",  # Caribbean, but no specific match
+    "Western europe": "Unknown",  # Too broad
+    "With heavy cantonese accent": "Chinese",
 }
+
+
+STARTS_WITH = [
+    "Afrikaans",
+    "American",
+    "Australian",
+    "Bangladeshi",
+    "Canadian",
+    "Chinese",
+    "Dutch",
+    "Eastern European",
+    "European",
+    "England",
+    "English",
+    "German",
+    "Filipino",
+    "India",
+    "Irish" "Israeli",
+    "Italian",
+    "Japanese",
+    "Kenyan",
+    "Northern Irish",
+    "New Zealand",
+    "Nigerian",
+    "Malaysian",
+    "Russian",
+    "Scottish",
+    "Singaporean",
+    "Slavic",
+    "South African",
+    "Southern African",
+    "Swedish",
+    "Swiss",
+    "United States English",
+    "West Indies",
+    "french",
+    "polish",
+    "serbian",
+]
 
 
 def preprocess_labels(label: str) -> str:
@@ -96,7 +237,10 @@ def preprocess_labels(label: str) -> str:
         language_code = label.split("_")[-1]
         label = LANGUAGES[language_code]
     # VCTK labels for two words are concatenated into one (NewZeleand-> New Zealand)
-    label = re.sub(r"(\w)([A-Z])", r"\1 \2", label)
+    label = re.sub(r"(\w)([A-Z])", r"\1 \2", label).strip()
+    for prefix in STARTS_WITH:
+        if label.startswith(prefix):
+            label = prefix
     # convert Whisper language code (polish) to capitalised (Polish)
     label = label.capitalize()
     if label in ACCENT_MAPPING:

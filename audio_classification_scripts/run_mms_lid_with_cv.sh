@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+
+python run_audio_classification.py \
+    --model_name_or_path "facebook/mms-lid-126" \
+    --train_dataset_name "stable-speech/concatenated-normalized-accent-dataset+stable-speech/concatenated-common-voice-15-accented" \
+    --train_dataset_config_name "default+default" \
+    --train_split_name "train+train" \
+    --train_label_column_name "labels+labels" \
+    --eval_dataset_name "stable-speech/concatenated-normalized-accent-dataset" \
+    --eval_dataset_config_name "default" \
+    --eval_split_name "test" \
+    --eval_label_column_name "labels" \
+    --output_dir "./" \
+    --do_train \
+    --do_eval \
+    --overwrite_output_dir \
+    --remove_unused_columns False \
+    --fp16 \
+    --fp16_full_eval \
+    --learning_rate 1e-4 \
+    --lr_scheduler_type "constant_with_warmup" \
+    --max_length_seconds 20 \
+    --min_length_seconds 5 \
+    --attention_mask \
+    --warmup_steps 100 \
+    --max_steps 5000 \
+    --per_device_train_batch_size 32 \
+    --per_device_eval_batch_size 32 \
+    --preprocessing_num_workers 4 \
+    --dataloader_num_workers 4 \
+    --logging_strategy "steps" \
+    --logging_steps 10 \
+    --evaluation_strategy "steps" \
+    --eval_steps 1000 \
+    --save_strategy "no" \
+    --save_steps 5000 \
+    --filter_threshold 0.01 \
+    --freeze_base_model False \
+    --push_to_hub False \
+    --trust_remote_code

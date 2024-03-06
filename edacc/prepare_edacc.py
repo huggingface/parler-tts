@@ -76,14 +76,17 @@ def main():
     accent_dataset = load_dataset("sanchit-gandhi/edacc_accents", split="train")
 
     def format_dataset(batch):
-        batch["speaker_id"]  = batch["Final-Participant_ID"].replace("EAEC", "EDACC").replace("P1", "-A").replace("P2", "-B")
+        batch["speaker_id"] = (
+            batch["Final-Participant_ID"].replace("EAEC", "EDACC").replace("P1", "-A").replace("P2", "-B")
+        )
         return batch
 
     accent_dataset = accent_dataset.map(format_dataset, remove_columns=["Final-Participant_ID"])
 
     # 2. Clean accents for each speaker
     linguistic_background_clean = {
-        participant: accent.strip() for participant, accent in zip(accent_dataset["speaker_id"], accent_dataset["English_Variety"])
+        participant: accent.strip()
+        for participant, accent in zip(accent_dataset["speaker_id"], accent_dataset["English_Variety"])
     }
     linguistic_variety = {
         participant: l1.strip() for participant, l1 in zip(accent_dataset["speaker_id"], accent_dataset["L1_Variety"])
