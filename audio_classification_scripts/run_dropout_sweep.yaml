@@ -18,21 +18,21 @@ parameters:
   model_name_or_path:
     value: facebook/mms-lid-126
   train_dataset_name:
-    value: sanchit-gandhi/vctk+facebook/voxpopuli+sanchit-gandhi/edacc
+    value: stable-speech/concatenated-normalized-accent-dataset
   train_dataset_config_name:
-    value: default+en_accented+default
+    value: default
   train_split_name:
-    value: train+test+validation
+    value: train
   train_label_column_name:
-    value: accent+accent+accent
+    value: labels
   eval_dataset_name:
-    value: sanchit-gandhi/edacc
+    value: stable-speech/concatenated-normalized-accent-dataset
   eval_dataset_config_name:
     value: default
   eval_split_name:
     value: test
   eval_label_column_name:
-    value: accent
+    value: labels
   output_dir:
     value: ./
   remove_unused_columns:
@@ -44,7 +44,7 @@ parameters:
   max_length_seconds:
     value: 20
   min_length_seconds:
-    value: 8
+    value: 5
   attention_mask:
     value: true
   warmup_steps:
@@ -56,7 +56,7 @@ parameters:
   per_device_eval_batch_size:
     value: 32
   preprocessing_num_workers:
-    value: 16
+    value: 4
   dataloader_num_workers:
     value: 4
   logging_strategy:
@@ -72,14 +72,13 @@ parameters:
   save_steps:
     value: 1000
   freeze_base_model:
-    value: false
+    values:
+      - false
+      - true
   push_to_hub:
     value: false
   filter_threshold:
-    values:
-      - 1
-      - 2.5
-      - 5
+    value: 1
   feat_proj_dropout:
     values:
       - 0.0
