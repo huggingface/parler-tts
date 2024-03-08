@@ -22,6 +22,11 @@ _deps = [
     "transformers>=4.34.0",
     "datasets[audio]>=2.14.5",
     "torch",
+    "accelerate",
+    "evaluate",
+    "sentencepiece",
+    "descript-audio-codec",
+    "jiwer",
 ]
 
 _extras_dev_deps = [

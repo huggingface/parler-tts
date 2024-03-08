@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from torch.nn import CrossEntropyLoss
-from transformers import AutoConfig, AutoModel
+from transformers import AutoConfig, AutoModel, AutoModelForTextEncoding
 from transformers.activations import ACT2FN
 from transformers.generation.configuration_utils import GenerationConfig
 from transformers.generation.logits_process import ClassifierFreeGuidanceLogitsProcessor, LogitsProcessorList
@@ -1792,7 +1792,7 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
 
                 kwargs_text_encoder["config"] = encoder_config
 
-            text_encoder = AutoModel.from_pretrained(
+            text_encoder = AutoModelForTextEncoding.from_pretrained(
                 text_encoder_pretrained_model_name_or_path, *model_args, **kwargs_text_encoder
             )
 
