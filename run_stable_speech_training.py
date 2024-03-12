@@ -257,6 +257,10 @@ class ModelArguments:
         default=False,
         metadata={"help": "Whether to do sampling or greedy decoding."},
     )
+    temperature: float = field(
+        default=0.4,
+        metadata={"help": "Temperature if sampling."},
+    )
     max_length: int = field(
         default=1500, # TODO
         metadata={"help": "Whether to do sampling or greedy decoding."},
@@ -756,6 +760,7 @@ def main():
         "weight_decay": training_args.weight_decay,
         "adam_beta1": training_args.adam_beta1,
         "adam_beta2": training_args.adam_beta2,
+        "temperature": model_args.temperature,
         })
     
     
@@ -1310,6 +1315,7 @@ def main():
         
     gen_kwargs = {
         "do_sample": model_args.do_sample,
+        "temperature": model_args.temperature,
         "max_length": model_args.max_length,
     }
     # TODO: add max_length
