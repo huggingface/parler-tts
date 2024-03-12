@@ -1,7 +1,6 @@
 command:
   - python3
   - ${program}
-  - --load_best_model_at_end
   - --fp16
   - --fp16_full_eval
   - --do_train
@@ -11,7 +10,7 @@ command:
   - --ignore_mismatched_sizes
   - --gradient_checkpointing
   - ${args}
-method: grid
+method: random
 metric:
   goal: maximize
   name: eval/accuracy
@@ -19,7 +18,7 @@ parameters:
   model_name_or_path:
     value: facebook/mms-lid-126
   train_dataset_name:
-    value: stable-speech/concatenated-accent-dataset
+    value: stable-speech/concatenated-normalized-accent-dataset
   train_dataset_config_name:
     value: default
   train_split_name:
@@ -27,7 +26,7 @@ parameters:
   train_label_column_name:
     value: labels
   eval_dataset_name:
-    value: stable-speech/concatenated-accent-dataset
+    value: stable-speech/concatenated-normalized-accent-dataset
   eval_dataset_config_name:
     value: default
   eval_split_name:
@@ -43,19 +42,19 @@ parameters:
   lr_scheduler_type:
     value: constant_with_warmup
   max_length_seconds:
-    value: 20  # give some data diversity for longer audio samples
+    value: 20
   min_length_seconds:
-    value: 7
+    value: 5
   attention_mask:
     value: true
   warmup_steps:
-    value: 100
+    value: 50
   max_steps:
-    value: 2000
+    value: 1000
   per_device_train_batch_size:
     value: 32
   per_device_eval_batch_size:
-    value: 16
+    value: 32
   preprocessing_num_workers:
     value: 4
   dataloader_num_workers:
@@ -71,16 +70,59 @@ parameters:
   save_strategy:
     value: steps
   save_steps:
-    value: 2000
-  metric_for_best_model:
-    value: accuracy
+    value: 1000
   freeze_base_model:
     values:
-     - false
-     - true
-  group_by_length:
-    value: false  # TODO(SG): batch by length
+      - false
+      - true
   push_to_hub:
     value: false
+  filter_threshold:
+    value: 1
+  feat_proj_dropout:
+    values:
+      - 0.0
+      - 0.1
+      - 0.2
+  attention_dropout:
+    values:
+      - 0.0
+      - 0.1
+      - 0.2
+  activation_dropout:
+    values:
+      - 0.0
+      - 0.1
+      - 0.2
+  hidden_dropout:
+    values:
+      - 0.0
+      - 0.1
+      - 0.2
+  final_dropout:
+    values:
+      - 0.0
+      - 0.1
+      - 0.2
+  mask_time_prob:
+    values:
+      - 0.0
+      - 0.1
+      - 0.2
+  mask_time_length:
+    values:
+      - 10
+      - 15
+      - 20
+  mask_feature_prob:
+    values:
+      - 0.0
+      - 0.1
+      - 0.2
+  mask_feature_length:
+    values:
+      - 10
+      - 15
+      - 20
 program: run_audio_classification.py
 project: mms-lid-accent-classification

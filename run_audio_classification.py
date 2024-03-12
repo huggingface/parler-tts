@@ -58,12 +58,180 @@ def random_subsample(wav: np.ndarray, max_length: float, sample_rate: int = 1600
     return wav[random_offset : random_offset + sample_length]
 
 
+def deterministic_subsample(wav: np.ndarray, max_length: float, sample_rate: int = 16000) -> np.ndarray:
+    """Take first `max_length` seconds from the input audio"""
+    sample_length = int(round(sample_rate * max_length))
+    if len(wav) <= sample_length:
+        return wav
+    return wav[0:sample_length]
+
+
+# This list first defines the accent prefixes, which we use to strip the accent from CV
+# e.g. England, southern accent, slight west-country expression -> England
+# TODO(YL): update this with any CV test prefixes not present in the train set
+STARTS_WITH = [
+    "Afrikaans",
+    "American",
+    "Australian",
+    "Bangladeshi",
+    "Canadian",
+    "Chinese",
+    "Dutch",
+    "Eastern European",
+    "European",
+    "England",
+    "English",
+    "German",
+    "Filipino",
+    "India",
+    "Irish" "Israeli",
+    "Italian",
+    "Japanese",
+    "Kenyan",
+    "Northern Irish",
+    "New Zealand",
+    "Nigerian",
+    "Malaysian",
+    "Russian",
+    "Scottish",
+    "Singaporean",
+    "Slavic",
+    "South African",
+    "Southern African",
+    "Swedish",
+    "Swiss",
+    "United States English",
+    "West Indies",
+    "french",
+    "polish",
+    "serbian",
+]
+
+
+# This dictionary is used to map the un-normalised accent names to normalised ones
+# TODO(YL): update this with any CV test mappings not present in the train set
 ACCENT_MAPPING = {
     "British": "English",
-    "Canadian": "American",
+    # "Canadian": "American",  TODO(SG): decide whether to normalize these to closely related accents
+    # "New zealand": "Australian",
     "Northern irish": "Irish",
-    "New zealand": "Australian",
     "Pakistani": "Indian",
+    "Mainstream u s english": "American",
+    "Southern british english": "English",
+    "Indian english": "Indian",
+    "Scottish english": "Scottish",
+    "Don't know": "Unknown",
+    "Nigerian english": "Nigerian",
+    "Kenyan english": "Kenyan",
+    "Ghanain english": "Ghanain",
+    "Jamaican english": "Jamaican",
+    "Indonesian english": "Indonesian",
+    "South african english": "South african",
+    "Irish english": "Irish",
+    "Latin": "Latin american",
+    "European": "Unknown",  # Too general
+    "Eastern european": "Eastern european",  # TODO(SG): keep for now, but maybe remove later as too general
+    "Bangladeshi": "Indian",
+    "England": "English",
+    "India": "Indian",
+    "Afrikaans": "South african",
+    "California": "American",
+    "Nepali": "Indian",
+    "New york city": "American",
+    "New jerseyan": "American",
+    "Northumbrian british english": "English",
+    "Nottinghamshire,east midlands": "English",
+    "Southern african": "South african",
+    "United states english": "American",
+    "West indies": "Jamaican",
+    "2nd language": "Unknown",  # Too vague
+    "A savage texas gentleman": "American",
+    "A variety of texan english with some german influence that has undergone the cot-caught merger": "American",
+    "A'lo": "Unknown",  # Unclear
+    "Academic southern english,england english": "English",
+    "Argentinian english": "Latin american",
+    "Austrian": "German",
+    "Bangladesh,india and south asia (india, pakistan, sri lanka)": "Indian",
+    "Brazillian accent": "Brazilian",
+    "British accent": "English",
+    "Caribbean canadian": "Unknown",  # Specific combination not listed
+    "Colombian accent": "Latin american",
+    "Czech accent": "Czech",
+    "East african khoja": "Unknown",  # Specific community
+    "East indian": "Indian",
+    "East london": "English",
+    "England,london,academic": "English",
+    "Filipino": "Unknown",  # Unique blend
+    "Fluent,e sl,european": "Unknown",  # Too vague
+    "Generic european": "Unknown",  # Too vague
+    "Georgian english": "Unknown",  # No direct match
+    "Ghanaian english accent,african regular reader": "Unknown",  # Specific category not listed
+    "Haitian creole": "Unknown",  # Unique blend
+    "Hispanic": "Latin american",
+    "Hispanic/latino": "Latin american",
+    "Hong kong english": "Chinese",
+    "Hong kong english,scottish english": "Chinese",
+    "Hunglish": "Hungarian",
+    "I think mine accent is influenced by indian accent ,yes please. ,india and south asia (india, pakistan, sri lanka)": "Indian",
+    "I was born in england and have lived in australia, canada and france.": "English",
+    "International english,united states english,australian english": "American",
+    "Israeli": "Unknown",  # No direct match
+    "Israeli english": "Unknown",  # No direct match
+    "Javanese,indonesian english,malaysian english": "Indonesian",
+    "Kazakhstan english": "Unknown",  # No direct match
+    "Kiwi": "New zealand",  # Could be generalised to Australian
+    "Latin america,united states english": "Latin american",
+    "Latin american accent": "Latin american",
+    "Latin english": "Unknown",  # Too vague
+    "Latino": "Latin american",
+    "Latvian": "Latvian",  # Note: added new
+    "Little latino,united states english,second language": "Latin american",
+    "Liverpool english,lancashire english,england english": "English",
+    "Liverpudlian english": "English",
+    "Malaysian english": "Malaysian",  # Note: added new
+    "Mexican accent": "Latin american",
+    "Mid-atlantic united states english,philadelphia, pennsylvania, united states english,united states english,philadelphia style united states english": "American",
+    "Mid-atlantic,england english,united states english": "American",
+    "Midatlantic,england english": "American",
+    "Midwestern states (michigan),united states english": "American",
+    "Mild northern england english": "English",
+    "Minor french accent": "French",
+    "Mix of american and british ,native polish": "Polish",
+    "Mix of american and british accent": "Unknown",  # Combination not clearly mapped
+    "Mostly american with some british and australian inflections": "Unknown",  # Combination not clearly mapped
+    "My accent is influenced by the phones of all letters within a sentence.,southern african (south africa, zimbabwe, namibia)": "South african",
+    "New zealand english": "New Zealand English",
+    "Nigeria english": "Nigerian",  # Note: added new
+    "Non native speaker from france": "French",
+    "Non-native": "Unknown",  # Too vague
+    "Non-native,german accent": "German",
+    "North european english": "Unknown",  # Too broad
+    "Norwegian": "Norwegian",  # Note: added new
+    "Ontario,canadian english": "Canadian",  # Note: added new
+    "Polish english": "Polish",
+    "Rhode island new england accent": "American",
+    "Singaporean english": "Singaporean",  # Note: added new
+    "Slavic": "Eastern european",
+    "Slighty southern affected by decades in the midwest, 4 years in spain and germany, speak some german, spanish, polish. have lived in nine states.": "Unknown",  # Complex blend
+    "South african": "South african",
+    "South atlantic (falkland islands, saint helena)": "Unknown",  # Specific regions not listed
+    "South australia": "Australian",
+    "South indian": "Indian",
+    "Southern drawl": "American",
+    "Southern texas accent,united states english": "American",
+    "Southern united states,united states english": "American",
+    "Spanish bilingual": "Spanish",
+    "Spanish,foreign,non-native": "Spanish",
+    "Strong latvian accent": "Latvian",
+    "Swedish accent": "Swedish",  # Note: added new
+    "Transnational englishes blend": "Unknown",  # Too vague
+    "U.k. english": "English",
+    "Very slight russian accent,standard american english,boston influence": "American",
+    "Welsh english": "Welsh",
+    "West african": "Unknown",  # No specific West African category
+    "West indian": "Unknown",  # Caribbean, but no specific match
+    "Western europe": "Unknown",  # Too broad
+    "With heavy cantonese accent": "Chinese",
 }
 
 
@@ -74,7 +242,10 @@ def preprocess_labels(label: str) -> str:
         language_code = label.split("_")[-1]
         label = LANGUAGES[language_code]
     # VCTK labels for two words are concatenated into one (NewZeleand-> New Zealand)
-    label = re.sub(r"(\w)([A-Z])", r"\1 \2", label)
+    label = re.sub(r"(\w)([A-Z])", r"\1 \2", label).strip()
+    for prefix in STARTS_WITH:
+        if label.startswith(prefix):
+            label = prefix
     # convert Whisper language code (polish) to capitalised (Polish)
     label = label.capitalize()
     if label in ACCENT_MAPPING:
@@ -248,6 +419,52 @@ class ModelArguments:
         default=True,
         metadata={"help": "Will enable to load a pretrained model whose head dimensions are different."},
     )
+    attention_dropout: float = field(
+        default=0.0, metadata={"help": "The dropout ratio for the attention probabilities."}
+    )
+    activation_dropout: float = field(
+        default=0.0, metadata={"help": "The dropout ratio for activations inside the fully connected layer."}
+    )
+    feat_proj_dropout: float = field(default=0.0, metadata={"help": "The dropout ratio for the projected features."})
+    hidden_dropout: float = field(
+        default=0.0,
+        metadata={
+            "help": "The dropout probability for all fully connected layers in the embeddings, encoder, and pooler."
+        },
+    )
+    final_dropout: float = field(
+        default=0.0,
+        metadata={"help": "The dropout probability for the final projection layer."},
+    )
+    mask_time_prob: float = field(
+        default=0.05,
+        metadata={
+            "help": (
+                "Probability of each feature vector along the time axis to be chosen as the start of the vector "
+                "span to be masked. Approximately ``mask_time_prob * sequence_length // mask_time_length`` feature "
+                "vectors will be masked along the time axis."
+            )
+        },
+    )
+    mask_time_length: int = field(
+        default=10,
+        metadata={"help": "Length of vector span to mask along the time axis."},
+    )
+    mask_feature_prob: float = field(
+        default=0.0,
+        metadata={
+            "help": (
+                "Probability of each feature vector along the feature axis to be chosen as the start of the vectorspan"
+                " to be masked. Approximately ``mask_feature_prob * sequence_length // mask_feature_length`` feature"
+                " bins will be masked along the time axis."
+            )
+        },
+    )
+    mask_feature_length: int = field(
+        default=10,
+        metadata={"help": "Length of vector span to mask along the feature axis."},
+    )
+    layerdrop: float = field(default=0.0, metadata={"help": "The LayerDrop probability."})
 
 
 def convert_dataset_str_to_list(
@@ -467,9 +684,11 @@ def main():
     if training_args.do_eval:
         dataset_names_dict = convert_dataset_str_to_list(
             data_args.eval_dataset_name if data_args.eval_dataset_name else data_args.train_dataset_name,
-            data_args.eval_dataset_config_name
-            if data_args.eval_dataset_config_name
-            else data_args.train_dataset_config_name,
+            (
+                data_args.eval_dataset_config_name
+                if data_args.eval_dataset_config_name
+                else data_args.train_dataset_config_name
+            ),
             splits=data_args.eval_split_name,
             label_column_names=data_args.eval_label_column_name,
         )
@@ -544,6 +763,30 @@ def main():
     sampling_rate = feature_extractor.sampling_rate
     model_input_name = feature_extractor.model_input_names[0]
 
+    def prepare_dataset(batch):
+        batch["length"] = len(batch["audio"]["array"])
+        batch["labels"] = preprocess_labels(batch["labels"])
+        return batch
+
+    raw_datasets = raw_datasets.map(
+        prepare_dataset,
+        num_proc=data_args.preprocessing_num_workers,
+        desc="Computing audio length",
+    )
+
+    # filter training data with inputs < min_input_length
+    min_input_length = data_args.min_length_seconds * sampling_rate
+
+    def is_audio_valid(input_length):
+        return input_length > min_input_length
+
+    raw_datasets = raw_datasets.filter(
+        is_audio_valid,
+        input_columns=["length"],
+        num_proc=data_args.preprocessing_num_workers,
+        desc="Filtering by audio length",
+    )
+
     # filter training data with non-valid labels
     def is_label_valid(label):
         return label != "Unknown"
@@ -553,28 +796,6 @@ def main():
         input_columns=["labels"],
         num_proc=data_args.preprocessing_num_workers,
         desc="Filtering by labels",
-    )
-
-    # filter training data with inputs < min_input_length
-    max_input_length = data_args.max_length_seconds * sampling_rate
-    min_input_length = data_args.min_length_seconds * sampling_rate
-
-    def is_audio_valid(audio):
-        return max_input_length > len(audio["array"]) > min_input_length
-
-    raw_datasets = raw_datasets.filter(
-        is_audio_valid,
-        input_columns=["audio"],
-        num_proc=data_args.preprocessing_num_workers,
-        desc="Filtering by audio length",
-    )
-
-    # Prepare label mappings
-    raw_datasets = raw_datasets.map(
-        lambda label: {"labels": preprocess_labels(label)},
-        input_columns=["labels"],
-        num_proc=data_args.preprocessing_num_workers,
-        desc="Pre-processing labels",
     )
 
     # Print a summary of the labels to the stddout (helps identify low-label classes that could be filtered)
@@ -593,11 +814,11 @@ def main():
         if freq < data_args.filter_threshold:
             labels_to_remove.append(lab)
 
-    # filter training data with label freq below threshold
-    def is_label_valid(label):
-        return label not in labels_to_remove
-
     if len(labels_to_remove):
+        # filter training data with label freq below threshold
+        def is_label_valid(label):
+            return label not in labels_to_remove
+
         raw_datasets = raw_datasets.filter(
             is_label_valid,
             input_columns=["labels"],
@@ -606,7 +827,9 @@ def main():
         )
 
     # We'll include these in the model's config to get human readable labels in the Inference API.
-    set_labels = set(raw_datasets["train"]["labels"]).union(set(raw_datasets["eval"]["labels"]))
+    set_labels = set(raw_datasets["train"]["labels"])
+    if training_args.do_eval:
+        set_labels = set_labels.union(set(raw_datasets["eval"]["labels"]))
     label2id, id2label = {}, {}
     for i, label in enumerate(set(set_labels)):
         label2id[label] = str(i)
@@ -614,9 +837,14 @@ def main():
 
     def train_transforms(batch):
         """Apply train_transforms across a batch."""
-        audios = [audio["array"] for audio in batch["audio"]]
+        subsampled_wavs = []
+        for audio in batch["audio"]:
+            wav = deterministic_subsample(
+                audio["array"], max_length=data_args.max_length_seconds, sample_rate=feature_extractor.sampling_rate
+            )
+            subsampled_wavs.append(wav)
         inputs = feature_extractor(
-            audios, return_attention_mask=model_args.attention_mask, sampling_rate=sampling_rate
+            subsampled_wavs, return_attention_mask=model_args.attention_mask, sampling_rate=sampling_rate
         )
         output_batch = {
             model_input_name: inputs.get(model_input_name),
@@ -654,6 +882,22 @@ def main():
         token=model_args.token,
         trust_remote_code=model_args.trust_remote_code,
     )
+    # adapt config with regularization
+    config.update(
+        {
+            "feat_proj_dropout": model_args.feat_proj_dropout,
+            "attention_dropout": model_args.attention_dropout,
+            "hidden_dropout": model_args.hidden_dropout,
+            "final_dropout": model_args.final_dropout,
+            "mask_time_prob": model_args.mask_time_prob,
+            "mask_time_length": model_args.mask_time_length,
+            "mask_feature_prob": model_args.mask_feature_prob,
+            "mask_feature_length": model_args.mask_feature_length,
+            "layerdrop": model_args.layerdrop,
+            "activation_dropout": model_args.activation_dropout,
+        }
+    )
+
     model = AutoModelForAudioClassification.from_pretrained(
         model_args.model_name_or_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),

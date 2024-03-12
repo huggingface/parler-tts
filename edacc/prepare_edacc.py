@@ -6,7 +6,7 @@ import sys
 from dataclasses import dataclass, field
 
 import soundfile as sf
-from datasets import Audio, Dataset, DatasetDict
+from datasets import Audio, Dataset, DatasetDict, load_dataset
 from tqdm import tqdm
 from transformers import HfArgumentParser
 
@@ -53,88 +53,6 @@ class DataTrainingArguments:
     )
 
 
-ACCENT_MAPPING = {
-    "Italian": "Italian",
-    "International": "Unknown",
-    "American": "American",
-    "English": "English",
-    "Latin American": "Latin American",
-    "British": "English",
-    "Romanian": "Romanian",
-    "Standard Indian English": "Indian",
-    "Trans-Atlantic": "Irish",
-    "Slightly American": "American",
-    "European": "Unknown",
-    "Scottish (Fife)": "Scottish",
-    "English with Scottish inflections": "Scottish",
-    "Indian": "Indian",
-    "Asian": "Asian",
-    "NA": "Unknown",
-    "German": "German",
-    "South London": "English",
-    "Dutch": "Dutch",
-    "Mostly West Coast American with some Australian Intonation": "American",
-    "Japanese": "Japanese",
-    "Chinese": "Chinese",
-    "Generic middle class white person": "English",
-    "French": "French",
-    "Chinese accent or mixed accent(US, UK, China..) perhaps": "Chinese",
-    "American accent": "American",
-    "Catalan": "Catalan",
-    "American, I guess.": "American",
-    "Spanish American": "Latin American",
-    "Spanish": "Spanish",
-    "Standard American,Scottish": "American",
-    "Bulgarian": "Bulgarian",
-    "Latin": "Latin American",
-    "Latín American": "Latin American",
-    "Mexican": "Latin American",  # TODO: un-generalise latin american accents?
-    "North American": "American",
-    "Afrian": "African",
-    "Nigerian": "African",  # TODO: un-generalise african accents?
-    "East-European": "Eastern European",
-    "Eastern European": "Eastern European",
-    "Southern London": "English",
-    "American with a slight accent": "American",
-    "American-ish": "American",
-    "Indian / Pakistani accent": "Indian",
-    "Pakistani/American": "Pakistani",
-    "African accent": "African",
-    "Kenyan": "African",  # TODO: un-generalise african accents?
-    "Ghanaian": "African",  # TODO: un-generalise african accents?
-    "Spanish accent": "Spanish",
-    "Lithuanian": "Lithuanian",
-    "Lithuanian (eastern European)": "Lithuanian",
-    "Indonesian": "Indonesian",
-    "Egyptian": "Egyptian",
-    "South African English": "South African",
-    "Neutral": "English",
-    "Neutral accent": "English",
-    "Neutral English, Italian": "English",
-    "Fluent": "Unknown",
-    "Glaswegian": "Scottish",
-    "Glaswegian (not slang)": "Scottish",
-    "Irish": "Irish",
-    "Jamaican": "Jamaican",
-    "Jamaican accent": "Jamaican",
-    "Irish/ Dublin": "Irish",
-    "South Dublin Irish": "Irish",
-    "italian": "Italian",
-    "italian mixed with American and British English": "Italian",
-    "Italian mixed with American accent": "Italian",
-    "South American": "Latin American",
-    "Brazilian accent": "Latin American",  # TODO: un-generalise latin american accents?
-    "Israeli": "Israeli",
-    "Vietnamese accent": "Vietnamese",
-    "Southern Irish": "Irish",
-    "Slight Vietnamese accent": "Vietnamese",
-    "Midwestern United States": "American",
-    "Vietnamese English": "Vietnamese",
-    "Vietnamese": "Vietnamese",
-    "": "Unknown",
-}
-
-
 def main():
     # 1. Parse input arguments
     parser = HfArgumentParser(DataTrainingArguments)
@@ -155,9 +73,23 @@ def main():
                 "How would you describe your accent in English? (e.g. Italian, Glaswegian)"
             ]
 
+    accent_dataset = load_dataset("sanchit-gandhi/edacc_accents", split="train")
+
+    def format_dataset(batch):
+        batch["speaker_id"] = (
+            batch["Final-Participant_ID"].replace("EAEC", "EDACC").replace("P1", "-A").replace("P2", "-B")
+        )
+        return batch
+
+    accent_dataset = accent_dataset.map(format_dataset, remove_columns=["Final-Participant_ID"])
+
     # 2. Clean accents for each speaker
     linguistic_background_clean = {
-        participant: ACCENT_MAPPING[accent.strip()] for participant, accent in linguistic_background.items()
+        participant: accent.strip()
+        for participant, accent in zip(accent_dataset["speaker_id"], accent_dataset["English_Variety"])
+    }
+    linguistic_variety = {
+        participant: l1.strip() for participant, l1 in zip(accent_dataset["speaker_id"], accent_dataset["L1_Variety"])
     }
 
     # 3. Initialize dataset dict
@@ -207,7 +139,7 @@ def main():
 
                 # add gender/l1 information
                 all_genders.append(re.search(gender_pat, gender_l1).group(1))
-                all_l1s.append(re.search(l1_pat, gender_l1).group(1))
+                all_l1s.append(linguistic_variety[speaker])
 
                 # read audio file if different from previous
                 if file != current_audio:
@@ -238,7 +170,7 @@ def main():
                 "accent": all_normalized_accents,
                 "raw_accent": all_raw_accents,
                 "gender": all_genders,
-                "language": all_l1s,
+                "l1": all_l1s,
                 "audio": all_audio_paths,
             }
         ).cast_column("audio", Audio())

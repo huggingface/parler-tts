@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import torch
 from accelerate import Accelerator
-from datasets import load_dataset, DatasetDict
+from datasets import DatasetDict, load_dataset
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import (
@@ -81,13 +81,10 @@ class ModelArguments:
     use_fast_tokenizer: Optional[bool] = field(
         default=True, metadata={"help": "Use fast tokenizer for encoding/decoding input ids"}
     )
-    token: str = field(
-        default=None,
+    token: Optional[bool] = field(
+        default=True,
         metadata={
-            "help": (
-                "The token to use as HTTP bearer authorization for remote files. If not specified, will use the token "
-                "generated when running `huggingface-cli login` (stored in `~/.huggingface`)."
-            )
+            "help": "Whether or not to use an authentication token when loading/uploading from the Hugging Face Hub"
         },
     )
     do_sample: Optional[bool] = field(default=True, metadata={"help": "Whether to use sampling mode for generation"})
@@ -326,19 +323,22 @@ def main():
         tokenizer.pad_token_id = tokenizer.bos_token_id
         model.generation_config.pad_token_id = model.generation_config.eos_token_id
 
-
-    PROMPT = """ We have seven keywords that describe different attributes of an audio sample spoken by a given speaker: the speaker's gender, the speaker's accent, the amount of reverberation in the sample (high or low reverberation), the amount of noise in the sample (how clear or noisy), how monotone or animated the sample is, the speaker's pitch (high or low voice), the speaker's speed (how fast or slow the speaker is speaking).
-    Given these keywords, form a coherent sentence that summarises the seven attributes in a meaningful way. You can change the order of the keywords in the sentence and use common synonyms for these words, provided that the sentence summarises the attributes clearly. Keep the sentence simple - don't introduce additional information other than the keywords provided. Only return the generated sentence, not any other assistant remarks.
-    For example, given the following descriptors: 'female', 'Hungarian', 'slightly roomy sounding', 'fairly noisy', 'quite monotone', 'fairly low pitch', 'very slowly', a valid sentence would be: 'a woman with a deep voice speaking slowly and somewhat monotonously with a Hungarian accent in an echoey room with background noise'. Note how the seven attributes have been combined together in a simple sentence, with the ordering changed but no additional information added.
-    For the descriptors: {gender}, {accent}, {reverberation}, {noise}, {speech_monotony}, {pitch}, {speaking_rate}, the corresponding sentence is:"""
-
-    SUBSET_PROMPT = """ We have six keywords that describe different attributes of an audio sample spoken by a given speaker: the speaker's gender, the amount of reverberation in the sample (high or low reverberation), the amount of noise in the sample (how clear or noisy), how monotone or animated the sample is, the speaker's pitch (high or low voice), the speaker's speed (how fast or slow the speaker is speaking).
-    Given these keywords, form a coherent sentence that summarises the six attributes in a meaningful way. You can change the order of the keywords in the sentence and use common synonyms for these words, provided that the sentence summarises the attributes clearly. Keep the sentence simple - don't introduce additional information other than the keywords provided. Only return the generated sentence, not any other assistant remarks.
-    For example, given the following descriptors: 'female', 'slightly roomy sounding', 'fairly noisy', 'quite monotone', 'fairly low pitch', 'very slowly', a valid sentence would be: 'a woman with a deep voice speaking slowly and somewhat monotonously in an echoey room with background noise'. Note how the six attributes have been combined together in a simple sentence, with the ordering changed but no additional information added.
-    For the descriptors: {gender}, {reverberation}, {noise}, {speech_monotony}, {pitch}, {speaking_rate}, the corresponding sentence is:"""
+    # TODO(SG): add accent keyword
+    PROMPT = (
+        "You will be given six descriptive keywords related to an audio sample of a person's speech. These keywords include:\n"
+        "1. The gender (e.g., male, female)\n"
+        "2. The level of reverberation (e.g., very roomy sounding, quite roomy sounding, slightly roomy sounding, moderate reverberation, slightly confined sounding, quite confined sounding, very confined sounding)\n"
+        "3. The amount of noise the sample (e.g., very noisy, quite noisy, slightly noisy, moderate ambient sound, slightly clear, quite clear, very clear)\n"
+        "4. The tone of the speaker's voice (e.g., very monotone, quite monotone, slightly monotone, moderate intonation, slightly expressive, quite expressive, very expressive)\n"
+        "5. The pace of the speaker's delivery (e.g., very slowly, quite slowly, slightly slowly, moderate speed, slightly fast, quite fast, very fast)\n"
+        "6. The pitch of the speaker's voice (e.g., very low pitch, quite low pitch, slightly low pitch, moderate pitch, slightly high pitch, quite high pitch, very high pitch)\n"
+        "Your task is to create a text description using these keywords that accurately describes the speech sample while ensuring the description remains grammatically correct and easy to understand. You can rearrange the keyword order as necessary, and substitute synonymous terms where appropriate. If the amount of noise is 'very noisy' and the level of reverberation is 'very roomy sounding', include the term 'very bad recording' in the description. Likewise, if the amount of noise is 'very clear' and the level of reverberation is 'very confined sounding', include the term 'very good recording' in the description. Otherwise, do not add extra details beyond what has been provided, and only return the generated description.\n"
+        "For example, given the following keywords: 'female', 'slightly roomy sounding', 'slightly noisy', 'quite monotone', 'slightly low pitch', 'very slowly', a valid description would be: 'a woman with a deep voice speaking slowly and somewhat monotonously in an echoey room with background noise'.\n"
+        "For the keywords: '[gender]', '[reverberation]', '[noise]', '[speech_monotony]', '[pitch]', '[speaking_rate]', the corresponding description is:"
+    )
 
     def prepare_dataset(sample):
-        sample_prompt = SUBSET_PROMPT
+        sample_prompt = PROMPT
         for key in EXPECTED_COLUMNS:
             sample_prompt = sample_prompt.replace(f"[{key}]", sample[key])
         sample_prompt = [{"role": "user", "content": sample_prompt}]
@@ -379,6 +379,7 @@ def main():
         all_generated_ids = []
         for batch in tqdm(data_loader, disable=not accelerator.is_local_main_process):
             generated_ids = generate_step(batch)
+            generated_ids = accelerator.gather_for_metrics(generated_ids)
             all_generated_ids.extend(generated_ids.cpu())
 
         def postprocess_dataset(sample, idx):
@@ -396,12 +397,16 @@ def main():
                 with_indices=True,
             )
 
-    accelerator.end_training()
-
     if accelerator.is_main_process:
         vectorized_datasets.save_to_disk(data_args.output_dir)
         if data_args.push_to_hub:
-            vectorized_datasets.push_to_hub(data_args.hub_dataset_id)
+            vectorized_datasets.push_to_hub(
+                data_args.hub_dataset_id,
+                config_name=data_args.dataset_config_name if data_args.dataset_config_name is not None else "default",
+                token=model_args.token,
+            )
+
+    accelerator.end_training()
 
 
 if __name__ == "__main__":
