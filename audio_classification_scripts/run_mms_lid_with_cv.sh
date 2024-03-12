@@ -36,5 +36,6 @@ python run_audio_classification.py \
     --save_steps 5000 \
     --filter_threshold 0.01 \
     --freeze_base_model False \
+    --gradient_checkpointing \
     --push_to_hub False \
     --trust_remote_code

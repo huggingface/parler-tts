@@ -66,11 +66,55 @@ def deterministic_subsample(wav: np.ndarray, max_length: float, sample_rate: int
     return wav[0:sample_length]
 
 
+# This list first defines the accent prefixes, which we use to strip the accent from CV
+# e.g. England, southern accent, slight west-country expression -> England
+# TODO(YL): update this with any CV test prefixes not present in the train set
+STARTS_WITH = [
+    "Afrikaans",
+    "American",
+    "Australian",
+    "Bangladeshi",
+    "Canadian",
+    "Chinese",
+    "Dutch",
+    "Eastern European",
+    "European",
+    "England",
+    "English",
+    "German",
+    "Filipino",
+    "India",
+    "Irish" "Israeli",
+    "Italian",
+    "Japanese",
+    "Kenyan",
+    "Northern Irish",
+    "New Zealand",
+    "Nigerian",
+    "Malaysian",
+    "Russian",
+    "Scottish",
+    "Singaporean",
+    "Slavic",
+    "South African",
+    "Southern African",
+    "Swedish",
+    "Swiss",
+    "United States English",
+    "West Indies",
+    "french",
+    "polish",
+    "serbian",
+]
+
+
+# This dictionary is used to map the un-normalised accent names to normalised ones
+# TODO(YL): update this with any CV test mappings not present in the train set
 ACCENT_MAPPING = {
     "British": "English",
-    # "Canadian": "American",
-    "Northern irish": "Irish",
+    # "Canadian": "American",  TODO(SG): decide whether to normalize these to closely related accents
     # "New zealand": "Australian",
+    "Northern irish": "Irish",
     "Pakistani": "Indian",
     "Mainstream u s english": "American",
     "Southern british english": "English",
@@ -189,45 +233,6 @@ ACCENT_MAPPING = {
     "Western europe": "Unknown",  # Too broad
     "With heavy cantonese accent": "Chinese",
 }
-
-
-STARTS_WITH = [
-    "Afrikaans",
-    "American",
-    "Australian",
-    "Bangladeshi",
-    "Canadian",
-    "Chinese",
-    "Dutch",
-    "Eastern European",
-    "European",
-    "England",
-    "English",
-    "German",
-    "Filipino",
-    "India",
-    "Irish" "Israeli",
-    "Italian",
-    "Japanese",
-    "Kenyan",
-    "Northern Irish",
-    "New Zealand",
-    "Nigerian",
-    "Malaysian",
-    "Russian",
-    "Scottish",
-    "Singaporean",
-    "Slavic",
-    "South African",
-    "Southern African",
-    "Swedish",
-    "Swiss",
-    "United States English",
-    "West Indies",
-    "french",
-    "polish",
-    "serbian",
-]
 
 
 def preprocess_labels(label: str) -> str:
