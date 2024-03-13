@@ -69,7 +69,7 @@ AutoModel.register(DACConfig, DACModel)
 
 
 from accelerate import Accelerator
-from accelerate.utils import set_seed
+from accelerate.utils import set_seed, AutocastKwargs
 from accelerate.utils.memory import release_memory
 
 from stable_speech import StableSpeechForConditionalGeneration, StableSpeechConfig, apply_delay_pattern_mask, build_delay_pattern_mask
@@ -452,6 +452,14 @@ class DataTrainingArguments:
             "help": "If set, will save the dataset to this path if this is an empyt folder. If not empty, will load the datasets from it."
         }
     )
+    pad_to_multiple_of: Optional[int] = field(
+        default=2,
+        metadata={
+            "help": (
+                "Pad to multiple of for tokenizers."
+            )
+        },
+    )
     
 @dataclass
 class StableSpeechTrainingArguments(Seq2SeqTrainingArguments):
@@ -546,7 +554,6 @@ class DataCollatorStableSpeechWithPadding:
         prompt_input_ids = [{"input_ids": feature["prompt_input_ids"]} for feature in features]
         prompt_input_ids = self.prompt_tokenizer.pad(prompt_input_ids, return_tensors="pt", padding=self.padding, pad_to_multiple_of=self.pad_to_multiple_of)
         
-        # TODO: check it's been padded on the left
         batch["prompt_input_ids"] = prompt_input_ids["input_ids"]
         if "attention_mask" in prompt_input_ids:
             batch["prompt_attention_mask"] = prompt_input_ids["attention_mask"]
@@ -1214,7 +1221,7 @@ def main():
 
     # Instantiate custom data collator
     data_collator = DataCollatorStableSpeechWithPadding(
-        audio_feature_extractor=feature_extractor, feature_extractor_input_name=feature_extractor_input_name, prompt_tokenizer=prompt_tokenizer, description_tokenizer=description_tokenizer
+        audio_feature_extractor=feature_extractor, feature_extractor_input_name=feature_extractor_input_name, prompt_tokenizer=prompt_tokenizer, description_tokenizer=description_tokenizer, pad_to_multiple_of=data_args.pad_to_multiple_of
     )
     
     # Freeze Encoders
@@ -1318,13 +1325,21 @@ def main():
         "temperature": model_args.temperature,
         "max_length": model_args.max_length,
     }
-    # TODO: add max_length
     
     # Define gradient update step fn
     def train_step(
         batch,
+        accelerator,
+        autocast_kwargs,
     ):
         model.train()
+        
+        if mixed_precision == "fp16":
+            # fp16 doesn't work with T5-like models
+            with accelerator.autocast(autocast_handler=autocast_kwargs):
+                encoder_outputs = model.module.text_encoder(input_ids= batch.get("input_ids"), attention_mask=batch.get("attention_mask", None))
+                batch["encoder_outputs"] = encoder_outputs
+       
         outputs = model(**batch)
         # CE (data) loss
         ce_loss = outputs.loss
@@ -1350,7 +1365,7 @@ def main():
         output_audios = accelerator.pad_across_processes(output_audios, dim=1, pad_index=0)
         return output_audios
 
-
+    autocast_kwargs = AutocastKwargs(enabled=False)
     for epoch in range(epochs_trained, num_epochs):
         vectorized_datasets["train"] = vectorized_datasets["train"].shuffle(training_args.seed)
         # TODO: add args
@@ -1374,7 +1389,7 @@ def main():
 
         for batch in train_dataloader:
             with accelerator.accumulate(model):
-                loss, train_metric = train_step(batch)
+                loss, train_metric = train_step(batch, accelerator, autocast_kwargs)
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(model.parameters(), training_args.max_grad_norm)

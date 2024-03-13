@@ -804,15 +804,18 @@ class StableSpeechDecoder(StableSpeechPreTrainedModel):
         if prompt_hidden_states is not None:
             inputs_embeds = torch.cat([prompt_hidden_states, inputs_embeds], dim=1)
             
-            # TODO: verify if prompt attention mask is required and has to be 
-            # As it is, the masked ids from the prompt will still count in the positions embeddings
-            if prompt_attention_mask is not None and attention_mask is not None:
-                attention_mask = torch.cat([prompt_attention_mask, attention_mask], dim=1)
-            elif prompt_attention_mask is not None:
-                logger.warning_once(
-                    "`prompt_attention_mask` is specified but `attention_mask` is not. A full `attention_mask` will be created. Make sure this is the intended behaviour."
-                )
+        # As it is, the masked ids from the prompt will still count in the positions embeddings
+        if prompt_attention_mask is not None and attention_mask is not None:
+            attention_mask = torch.cat([prompt_attention_mask, attention_mask], dim=1)
+        elif prompt_attention_mask is not None:
+            logger.warning_once(
+                "`prompt_attention_mask` is specified but `attention_mask` is not. A full `attention_mask` will be created. Make sure this is the intended behaviour."
+            )
+            if past_key_values is None:
                 attention_mask = torch.cat([prompt_attention_mask, torch.ones(input_shape, device=self.device, dtype=prompt_attention_mask.dtype)], dim=1)
+            else:
+                generated_length = past_key_values_length - prompt_attention_mask.shape[1]  + 1
+                attention_mask = torch.cat([prompt_attention_mask, torch.ones((input_shape[0] ,generated_length), device=self.device, dtype=prompt_attention_mask.dtype)], dim=1)
                 
         input_shape = inputs_embeds.size()[:-1]
         attention_mask = _prepare_4d_causal_attention_mask(
@@ -1174,7 +1177,7 @@ class StableSpeechForCausalLM(StableSpeechPreTrainedModel):
 
             if prompt_attention_mask is not None:
                 prompt_attention_mask = torch.concatenate(
-                    prompt_attention_mask, torch.zeros_like(prompt_attention_mask), dim=0
+                    [prompt_attention_mask, torch.zeros_like(prompt_attention_mask)], dim=0
                 )
 
         if past_key_values is not None:
@@ -2061,8 +2064,9 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
             if decoder_attention_mask is not None:
                 decoder_attention_mask = decoder_attention_mask.repeat((2, 1))
             if prompt_hidden_states is not None:
-                # TODO: ? we probably don't want to keep guidance scale here ? different task than musicgeneration
-                prompt_hidden_states = torch.concatenate([prompt_hidden_states, torch.zeros_like(prompt_hidden_states)], dim=0)
+                prompt_hidden_states = prompt_hidden_states.repeat((2,1,1))
+            if prompt_attention_mask is not None:
+                prompt_attention_mask = prompt_attention_mask.repeat((2,1))
 
         if past_key_values is not None:
             past_length = past_key_values[0][0].shape[2]
