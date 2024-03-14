@@ -2617,7 +2617,7 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
             output_values = []
             for sample_id in range(batch_size):
                 sample = output_ids[:, sample_id]
-                sample_mask = (((sample == generation_config.bos_token_id)|(sample == generation_config.eos_token_id)|(sample == generation_config.pad_token_id)).sum(dim=(0,1)) == 0)
+                sample_mask = ((sample >= self.audio_encoder.config.codebook_size).sum(dim=(0,1)) == 0)
                 if sample_mask.sum()>0:
                     sample = sample[:, :, sample_mask]
                     sample = self.audio_encoder.decode(sample[None, ...], [audio_scales[sample_id]]).audio_values
