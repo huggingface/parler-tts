@@ -10,7 +10,7 @@ accelerate launch --multi_gpu --mixed_precision=fp16 --num_processes=8 run_promp
   --output_dir "./libritts_r_tags_tagged_10k_generated" \
   --load_in_4bit \
   --push_to_hub \
-  --hub_dataset_id "stable-speech/libritts_r_tags_tagged_10k_generated"
+  --hub_dataset_id "parler-tts/libritts_r_tags_tagged_10k_generated"
 
 accelerate launch --multi_gpu --mixed_precision=fp16 --num_processes=8 run_prompt_creation.py \
   --dataset_name "ylacombe/libritts_r_tags_tagged_10k" \
@@ -22,7 +22,7 @@ accelerate launch --multi_gpu --mixed_precision=fp16 --num_processes=8 run_promp
   --output_dir "./libritts_r_tags_tagged_10k_generated" \
   --load_in_4bit \
   --push_to_hub \
-  --hub_dataset_id "stable-speech/libritts_r_tags_tagged_10k_generated"
+  --hub_dataset_id "parler-tts/libritts_r_tags_tagged_10k_generated"
 
 accelerate launch --multi_gpu --mixed_precision=fp16 --num_processes=8 run_prompt_creation.py \
   --dataset_name "ylacombe/mls-eng-10k-tags_tagged_10k" \
@@ -33,4 +33,4 @@ accelerate launch --multi_gpu --mixed_precision=fp16 --num_processes=8 run_promp
   --output_dir "./mls-eng-10k-tags_tagged_10k_generated" \
   --load_in_4bit \
   --push_to_hub \
-  --hub_dataset_id "stable-speech/mls-eng-10k-tags_tagged_10k_generated"
+  --hub_dataset_id "parler-tts/mls-eng-10k-tags_tagged_10k_generated"

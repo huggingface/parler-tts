@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 python run_dataset_concatenation.py \
-    --dataset_name "stable-speech/common_voice_15_0_accented" \
+    --dataset_name "parler-tts/common_voice_15_0_accented" \
     --dataset_config_name "en" \
     --dataset_split_name "train" \
     --label_column_name "accent" \
@@ -12,7 +12,7 @@ python run_dataset_concatenation.py \
     --output_dir "./concatenated-dataset-cv"
 
 python run_dataset_concatenation.py \
-    --dataset_name "stable-speech/common_voice_15_0_accented" \
+    --dataset_name "parler-tts/common_voice_15_0_accented" \
     --dataset_config_name "en" \
     --dataset_split_name "test" \
     --label_column_name "accent" \

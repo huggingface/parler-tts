@@ -2,11 +2,11 @@
 
 python run_audio_classification.py \
     --model_name_or_path "facebook/mms-lid-126" \
-    --train_dataset_name "stable-speech/concatenated-normalized-accent-dataset+stable-speech/concatenated-common-voice-15-accented" \
+    --train_dataset_name "parler-tts/concatenated-normalized-accent-dataset+parler-tts/concatenated-common-voice-15-accented" \
     --train_dataset_config_name "default+default" \
     --train_split_name "train+train" \
     --train_label_column_name "labels+labels" \
-    --eval_dataset_name "stable-speech/concatenated-normalized-accent-dataset" \
+    --eval_dataset_name "parler-tts/concatenated-normalized-accent-dataset" \
     --eval_dataset_config_name "default" \
     --eval_split_name "test" \
     --eval_label_column_name "labels" \

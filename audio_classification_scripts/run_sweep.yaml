@@ -19,7 +19,7 @@ parameters:
   model_name_or_path:
     value: facebook/mms-lid-126
   train_dataset_name:
-    value: stable-speech/concatenated-accent-dataset
+    value: parler-tts/concatenated-accent-dataset
   train_dataset_config_name:
     value: default
   train_split_name:
@@ -27,7 +27,7 @@ parameters:
   train_label_column_name:
     value: labels
   eval_dataset_name:
-    value: stable-speech/concatenated-accent-dataset
+    value: parler-tts/concatenated-accent-dataset
   eval_dataset_config_name:
     value: default
   eval_split_name:
