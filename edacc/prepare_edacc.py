@@ -73,7 +73,7 @@ def main():
                 "How would you describe your accent in English? (e.g. Italian, Glaswegian)"
             ]
 
-    accent_dataset = load_dataset("sanchit-gandhi/edacc_accents", split="train")
+    accent_dataset = load_dataset("edinburghcstr/edacc_accents", split="train")
 
     def format_dataset(batch):
         batch["speaker_id"] = (

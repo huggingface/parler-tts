@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 python run_dataset_concatenation.py \
-    --dataset_name "sanchit-gandhi/vctk+facebook/voxpopuli+sanchit-gandhi/edacc-normalized" \
+    --dataset_name "sanchit-gandhi/vctk+facebook/voxpopuli+edinburghcstr/edacc-normalized" \
     --dataset_config_name "default+en_accented+default" \
     --dataset_split_name "train+test+validation" \
     --label_column_name "accent+accent+accent" \
@@ -11,7 +11,7 @@ python run_dataset_concatenation.py \
     --output_dir "./concatenated-dataset"
 
 python run_dataset_concatenation.py \
-    --dataset_name "sanchit-gandhi/edacc-normalized" \
+    --dataset_name "edinburghcstr/edacc-normalized" \
     --dataset_config_name "default" \
     --dataset_split_name "test" \
     --label_column_name "accent" \

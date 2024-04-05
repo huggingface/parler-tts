@@ -27,9 +27,9 @@ In the proceeding example, we follow Stability's approach by taking audio embedd
 model, and training the linear classifier on a combination of three open-source datasets:
 1. The English Accented (`en_accented`) subset of [Voxpopuli](https://huggingface.co/datasets/facebook/voxpopuli)
 2. The train split of [VCTK](https://huggingface.co/datasets/vctk) 
-3. The dev split of [EdAcc](https://huggingface.co/datasets/sanchit-gandhi/edacc)
+3. The dev split of [EdAcc](https://huggingface.co/datasets/edinburghcstr/edacc)
 
-The model is subsequently evaluated on the test split of [EdAcc](https://huggingface.co/datasets/sanchit-gandhi/edacc)
+The model is subsequently evaluated on the test split of [EdAcc](https://huggingface.co/datasets/edinburghcstr/edacc)
 to give the final classification accuracy.
 
 ```bash
@@ -37,11 +37,11 @@ to give the final classification accuracy.
 
 python run_audio_classification.py \
     --model_name_or_path "facebook/mms-lid-126" \
-    --train_dataset_name "vctk+facebook/voxpopuli+sanchit-gandhi/edacc" \
+    --train_dataset_name "vctk+facebook/voxpopuli+edinburghcstr/edacc" \
     --train_dataset_config_name "main+en_accented+default" \
     --train_split_name "train+test+validation" \
     --train_label_column_name "accent+accent+accent" \
-    --eval_dataset_name "sanchit-gandhi/edacc" \
+    --eval_dataset_name "edinburghcstr/edacc" \
     --eval_dataset_config_name "default" \
     --eval_split_name "test" \
     --eval_label_column_name "accent" \
