@@ -1,5 +1,3 @@
-ATTENTION: don't forget to add group_by_length in configs.
-
 # Parler-TTS
 
 [[Paper we reproduce]](https://arxiv.org/abs/2402.01912)
@@ -65,7 +63,6 @@ Then, run:
 python helpers/gradio_demo/app.py
 ```
 
-
 ## Acknowledgements
 
 This library builds on top of a number of open-source giants, to whom we'd like to extend our warmest thanks for providing these tools!
@@ -91,6 +88,8 @@ Namely, we're looking at ways to improve both quality and speed:
 - Optimization:
     - Compilation and static cache
     - Support to FA2 and SDPA
+- Evaluation:
+    - Add more evaluation metrics
 
 ## Citation
 ```

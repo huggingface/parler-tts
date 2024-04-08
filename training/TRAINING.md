@@ -2,9 +2,22 @@
 
 This sub-folder contains all the information to train or finetune you own Parler-TTS model.
 
+## Getting started
+
+### Requirements
+
+### Initializing models
+
+### Datasets
+
+## Training
+
+
+## Discussions and tips
 
 
 
+ATTENTION: don't forget to add group_by_length in configs.
 
 
 # Init model
@@ -16,9 +29,3 @@ text_model = "google-t5/t5-small"
 encodec_version = "facebook/encodec_24khz"
 text_model = "google/flan-t5-base"
 encodec_version = "ylacombe/dac_44khZ_8kbps"
-
-
-
-## TODOs
-- [ ] Add PEFT compatibility to do Lora fine-tuning.
-- [ ] Enrich dataset with accent classifier
