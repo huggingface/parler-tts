@@ -15,7 +15,7 @@ by Dan Lyth and Simon King, from Stability AI and Edinburgh University respectiv
 
 Contrarily to standard TTS models, Parler-TTS allows you to directly describe the speaker characteristics with a simple text description where you can modulate gender, pitch, speaking style, accent, etc.
 
-## Inference
+## Usage
 
 > [!TIP]
 > You can directly try it out in an interactive demo [here](TODO: add link to spaces)!
@@ -42,7 +42,6 @@ generation = model.generate(input_ids=input_ids, prompt_input_ids=prompt_input_i
 audio_arr = generation.cpu().numpy().squeeze()
 sf.write("parler_tts_out.wav", audio_arr, model.config.sampling_rate)
 ```
-
 
 
 ## Installation steps
@@ -74,6 +73,24 @@ This library builds on top of a number of open-source giants, to whom we'd like 
 Special thanks to:
 - Dan Lyth and Simon King, from Stability AI and Edinburgh University respectively, for publishing such a promising and clear research paper: [Natural language guidance of high-fidelity text-to-speech with synthetic annotations](https://arxiv.org/abs/2402.01912).
 - and the many libraries used, namely [datasets](https://huggingface.co/docs/datasets/v2.17.0/en/index), [accelerate](https://huggingface.co/docs/accelerate/en/index), [jiwer](https://github.com/jitsi/jiwer), [wandb](https://wandb.ai/), and [transformers](https://huggingface.co/docs/transformers/index).
+
+## Contribution
+
+Contributions are welcome, as the project offers many possibilities for improvement and exploration.
+
+Namely, we're looking at ways to improve both quality and speed:
+- Datasets:
+    - Train on more data
+    - Add more features such as accents
+- Training:
+    - Add PEFT compatibility to do Lora fine-tuning.
+    - Add possibility to train without description column.
+    - Explore multilingual training.
+    - Explore mono-speaker finetuning.
+    - Explore more architectures.
+- Optimization:
+    - Compilation and static cache
+    - Support to FA2 and SDPA
 
 ## Citation
 ```
