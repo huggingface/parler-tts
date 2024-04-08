@@ -1,94 +1,87 @@
+ATTENTION: don't forget to add group_by_length in configs.
+
 # Parler-TTS
 
-Work in-progress reproduction of the text-to-speech (TTS) model from the paper [Natural language guidance of high-fidelity text-to-speech with synthetic annotations](https://www.text-description-to-speech.com)
-by Dan Lyth and Simon King, from Stability AI and Edinburgh University respectively.
+[[Paper we reproduce]](https://arxiv.org/abs/2402.01912)
+[[Models]](https://huggingface.co/parler-tts)
+[[Training Code]](training)
+[[Interactive Demo]](TODO - linked to spaces)
 
-Reproducing the TTS model requires the following 5 steps to be completed in order:
-1. Train the Accent Classifier
-2. Annotate the Training Set
-3. Aggregate Statistics
-4. Create Descriptions
-5. Train the Model
+> [!IMPORTANT]
+> We're proud to release Parler-TTS v0.1, our first 300M-parameters Parler-TTS model, trained on 10.5K hours of audio data.
 
-## Step 1: Train the Accent Classifier
+Parler-TTS is a reproduction of the text-to-speech (TTS) model from the paper [Natural language guidance of high-fidelity text-to-speech with synthetic annotations](https://www.text-description-to-speech.com)
+by Dan Lyth and Simon King, from Stability AI and Edinburgh University respectively. 
 
-The script [`run_audio_classification.py`](run_audio_classification.py) can be used to train an audio encoder model from 
-the [Transformers library](https://github.com/huggingface/transformers) (e.g. Wav2Vec2, MMS, or Whisper) for the accent
-classification task.
+Contrarily to standard TTS models, Parler-TTS allows you to directly describe the speaker characteristics with a simple text description where you can modulate gender, pitch, speaking style, accent, etc.
 
-Starting with a pre-trained audio encoder model, a simple linear classifier is appended to the last hidden-layer to map the 
-audio embeddings to class label predictions. The audio encoder can either be frozen (`--freeze_base_model`) or trained. 
-The linear classifier is randomly initialised, and is thus always trained.
+## Inference
 
-The script can be used to train on a single accent dataset, or a combination of datasets, which should be specified by
-separating dataset names, configs and splits by the `+` character in the launch command (see below for an example).
+> [!TIP]
+> You can directly try it out in an interactive demo [here](TODO: add link to spaces)!
 
-In the proceeding example, we follow Stability's approach by taking audio embeddings from a frozen [MMS-LID](https://huggingface.co/facebook/mms-lid-126) 
-model, and training the linear classifier on a combination of three open-source datasets:
-1. The English Accented (`en_accented`) subset of [Voxpopuli](https://huggingface.co/datasets/facebook/voxpopuli)
-2. The train split of [VCTK](https://huggingface.co/datasets/vctk) 
-3. The dev split of [EdAcc](https://huggingface.co/datasets/sanchit-gandhi/edacc)
+Using Parler-TTS is as simple as "bonjour". Simply use the following inference snippet.
 
-The model is subsequently evaluated on the test split of [EdAcc](https://huggingface.co/datasets/sanchit-gandhi/edacc)
-to give the final classification accuracy.
+```py
+from parler_tts import ParlerTTSForConditionalGeneration
+from transformers import AutoTokenizer, AutoFeatureExtractor
+import soundfile as sf
 
-```bash
-#!/usr/bin/env bash
+# TODO: change repo id
 
-python run_audio_classification.py \
-    --model_name_or_path "facebook/mms-lid-126" \
-    --train_dataset_name "vctk+facebook/voxpopuli+sanchit-gandhi/edacc" \
-    --train_dataset_config_name "main+en_accented+default" \
-    --train_split_name "train+test+validation" \
-    --train_label_column_name "accent+accent+accent" \
-    --eval_dataset_name "sanchit-gandhi/edacc" \
-    --eval_dataset_config_name "default" \
-    --eval_split_name "test" \
-    --eval_label_column_name "accent" \
-    --output_dir "./" \
-    --do_train \
-    --do_eval \
-    --overwrite_output_dir \
-    --remove_unused_columns False \
-    --fp16 \
-    --learning_rate 1e-4 \
-    --max_length_seconds 20 \
-    --attention_mask False \
-    --warmup_ratio 0.1 \
-    --num_train_epochs 5 \
-    --per_device_train_batch_size 32 \
-    --per_device_eval_batch_size 32 \
-    --preprocessing_num_workers 16 \
-    --dataloader_num_workers 4 \
-    --logging_strategy "steps" \
-    --logging_steps 10 \
-    --evaluation_strategy "epoch" \
-    --save_strategy "epoch" \
-    --load_best_model_at_end True \
-    --metric_for_best_model "accuracy" \
-    --save_total_limit 3 \
-    --freeze_base_model \
-    --push_to_hub \
-    --trust_remote_code
+model = ParlerTTSForConditionalGeneration.from_pretrained("ylacombe/parler_tts_300M_v0.09")
+tokenizer = AutoTokenizer.from_pretrained("ylacombe/parler_tts_300M_v0.09")
+
+prompt = "Hey, how are you doing today?"
+description = "A female speaker with a slightly low-pitched voice delivers her words quite expressively, in a very confined sounding environment with clear audio quality. She speaks very fast."
+
+input_ids = tokenizer(description, return_tensors="pt").input_ids
+prompt_input_ids = tokenizer(prompt, return_tensors="pt").input_ids
+
+generation = model.generate(input_ids=input_ids, prompt_input_ids=prompt_input_ids)
+audio_arr = generation.cpu().numpy().squeeze()
+sf.write("parler_tts_out.wav", audio_arr, model.config.sampling_rate)
 ```
 
-Tips:
-1. **Number of labels:** normalisation should be applied to the target class labels to group linguistically similar accents together (e.g. "Southern Irish" and "Irish" should both be "Irish"). This helps _balance_ the dataset by removing labels with very few examples. You can modify the function `preprocess_labels` to implement any custom normalisation strategy.
 
-## Step 2: Annotate the Training Set
+## Installation steps
 
-Annotate the training dataset with information on: SNR, C50, pitch and speaking rate. 
+Parler-TTS has light-weight dependencies and can be installed in one line:
+```sh
+pip install parler-tts
+```
 
-## Step 3: Aggregate Statistics
+## Gradio demo
 
-Aggregate statistics from Step 2. Convert continuous values to discrete labels.
+You can host your own Parler-TTS demo. First, install [`gradio`](https://www.gradio.app/) with:
 
-## Step 4: Create Descriptions
+```sh
+pip install gradio
+```
 
-Convert sequence of discrete labels to text description (using an LLM). 
+Then, run:
 
-## Step 5: Train the Model
+```python
+python helpers/gradio_demo/app.py
+```
 
-Train MusicGen-style model on the TTS task.
-Needs DAC.
 
+## Acknowledgements
+
+This library builds on top of a number of open-source giants, to whom we'd like to extend our warmest thanks for providing these tools!
+
+Special thanks to:
+- Dan Lyth and Simon King, from Stability AI and Edinburgh University respectively, for publishing such a promising and clear research paper: [Natural language guidance of high-fidelity text-to-speech with synthetic annotations](https://arxiv.org/abs/2402.01912).
+- and the many libraries used, namely [datasets](https://huggingface.co/docs/datasets/v2.17.0/en/index), [accelerate](https://huggingface.co/docs/accelerate/en/index), [jiwer](https://github.com/jitsi/jiwer), [wandb](https://wandb.ai/), and [transformers](https://huggingface.co/docs/transformers/index).
+
+## Citation
+```
+@misc{lacombe-etal-2024-parler-tts,
+  author = {Yoach Lacombe and Vaibhav Srivastav and Sanchit Gandhi},
+  title = {Parler-TTS},
+  year = {2024},
+  publisher = {GitHub},
+  journal = {GitHub repository},
+  howpublished = {\url{https://github.com/ylacombe/dataspeech}}
+}
+```

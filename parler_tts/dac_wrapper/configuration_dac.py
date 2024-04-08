@@ -12,6 +12,7 @@ class DACConfig(PretrainedConfig):
         codebook_size: int = 1024,
         latent_dim: int = 1024,
         frame_rate: int = 86,
+        sampling_rate: int = 44100,
         **kwargs,
     ):
         self.codebook_size = codebook_size
@@ -19,5 +20,6 @@ class DACConfig(PretrainedConfig):
         self.latent_dim = latent_dim
         self.num_codebooks = num_codebooks
         self.frame_rate = frame_rate
+        self.sampling_rate = sampling_rate
 
         super().__init__(**kwargs)
