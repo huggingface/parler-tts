@@ -44,6 +44,7 @@ sf.write("parler_tts_out.wav", audio_arr, model.config.sampling_rate)
 ```
 
 
+
 ## Installation steps
 
 Parler-TTS has light-weight dependencies and can be installed in one line:
