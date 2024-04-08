@@ -7,3 +7,7 @@ from .modeling_parler_tts import (
 )
 
 from .dac_wrapper import DACConfig, DACModel
+from transformers import AutoConfig, AutoModel
+
+AutoConfig.register("dac", DACConfig)
+AutoModel.register(DACConfig, DACModel)

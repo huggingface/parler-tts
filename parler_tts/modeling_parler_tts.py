@@ -45,6 +45,11 @@ from transformers.utils import (
 )
 
 from .configuration_parler_tts import ParlerTTSConfig, ParlerTTSDecoderConfig
+from .dac_wrapper import DACConfig, DACModel
+from transformers import AutoConfig, AutoModel
+
+AutoConfig.register("dac", DACConfig)
+AutoModel.register(DACConfig, DACModel)
 
 if TYPE_CHECKING:
     from transformers.generation.streamers import BaseStreamer
