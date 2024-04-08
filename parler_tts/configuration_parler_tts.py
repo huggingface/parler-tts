@@ -40,7 +40,7 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
     Args:
         vocab_size (`int`, *optional*, defaults to 2049):
             Vocabulary size of the ParlerTTSDecoder model. Defines the number of different tokens that can be
-            represented by the `inputs_ids` passed when calling [`ParlerTTSDecoder`].
+            represented by the `inputs_ids` passed when calling [`ParlerTTSDecoder`]. 
         hidden_size (`int`, *optional*, defaults to 1024):
             Dimensionality of the layers and the pooler layer.
         num_hidden_layers (`int`, *optional*, defaults to 24):
@@ -138,7 +138,8 @@ class ParlerTTSConfig(PretrainedConfig):
 
     Args:
         vocab_size (`int`, *optional*, defaults to 1024):
-            Vocabulary size of the prompt # TODO.
+            Vocabulary size of the prompt token ids. Defines the number of different tokens that can be
+            represented by the `prompt_inputs_ids`.
         kwargs (*optional*):
             Dictionary of keyword arguments. Notably:
 
