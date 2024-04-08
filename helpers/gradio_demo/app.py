@@ -95,9 +95,7 @@ with gr.Blocks(css=css) as block:
             description = gr.Textbox(label="Description", lines=2, value="", elem_id="input_description")
             run_button = gr.Button("Generate Audio", variant="primary")
         with gr.Column():
-            audio_out = gr.Audio(
-                label="Parler-TTS generation", type="numpy", elem_id="audio_out"
-            )
+            audio_out = gr.Audio(label="Parler-TTS generation", type="numpy", elem_id="audio_out")
 
     inputs = [input_text, description]
     outputs = [audio_out]

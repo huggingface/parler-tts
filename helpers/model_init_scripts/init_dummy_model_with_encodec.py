@@ -4,7 +4,7 @@ import os
 import argparse
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()    
+    parser = argparse.ArgumentParser()
     parser.add_argument("save_directory", type=str, help="Directory where to save the model and the decoder.")
     args = parser.parse_args()
 
@@ -40,7 +40,6 @@ if __name__ == "__main__":
     decoder = ParlerTTSForCausalLM(decoder_config)
 
     decoder.save_pretrained(os.path.join(args.save_directory, "decoder"))
-
 
     model = ParlerTTSForConditionalGeneration.from_sub_models_pretrained(
         text_encoder_pretrained_model_name_or_path=text_model,

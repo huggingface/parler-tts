@@ -5,11 +5,11 @@ import argparse
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()    
+    parser = argparse.ArgumentParser()
     parser.add_argument("save_directory", type=str, help="Directory where to save the model and the decoder.")
     parser.add_argument("text_model", type=str, help="Repository id or path to the text encoder.")
     parser.add_argument("audio_model", type=str, help="Repository id or path to the audio encoder.")
-    
+
     args = parser.parse_args()
 
     text_model = args.text_model
@@ -21,7 +21,6 @@ if __name__ == "__main__":
     encodec_vocab_size = encodec.codebook_size
     num_codebooks = encodec.num_codebooks
     print("num_codebooks", num_codebooks)
-
 
     decoder_config = ParlerTTSDecoderConfig(
         vocab_size=encodec_vocab_size + 64,  # + 64 instead of +1 to have a multiple of 64
@@ -42,10 +41,8 @@ if __name__ == "__main__":
         num_codebooks=num_codebooks,
     )
 
-
     decoder = ParlerTTSForCausalLM(decoder_config)
     decoder.save_pretrained(os.path.join(args.save_directory, "decoder"))
-
 
     model = ParlerTTSForConditionalGeneration.from_sub_models_pretrained(
         text_encoder_pretrained_model_name_or_path=text_model,
@@ -64,5 +61,4 @@ if __name__ == "__main__":
     model.generation_config.do_sample = True  # True
     model.generation_config.guidance_scale = 1  # 3.0
 
-
-    model.save_pretrained(os.path.join(args.save_directory,"stable-speech-untrained-300M/"))
+    model.save_pretrained(os.path.join(args.save_directory, "stable-speech-untrained-300M/"))
