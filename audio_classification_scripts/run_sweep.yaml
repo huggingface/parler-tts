@@ -1,33 +1,30 @@
 command:
   - python3
   - ${program}
-  - --load_best_model_at_end
   - --fp16
   - --fp16_full_eval
   - --do_train
   - --do_eval
   - --trust_remote_code
   - --overwrite_output_dir
-  - --ignore_mismatched_sizes
-  - --gradient_checkpointing
   - ${args}
-method: grid
+method: random
 metric:
   goal: maximize
   name: eval/accuracy
 parameters:
   model_name_or_path:
-    value: facebook/mms-lid-126
+    value: facebook/mms-lid-4017
   train_dataset_name:
-    value: stable-speech/concatenated-accent-dataset
+    value:  "stable-speech/concatenated-normalized-accent-dataset+stable-speech/concatenated-common-voice-15-accented"
   train_dataset_config_name:
-    value: default
+    value: "default+default"
   train_split_name:
-    value: train
+    value: "train+train"
   train_label_column_name:
-    value: labels
+    value: "labels+labels"
   eval_dataset_name:
-    value: stable-speech/concatenated-accent-dataset
+    value: stable-speech/concatenated-normalized-accent-dataset
   eval_dataset_config_name:
     value: default
   eval_split_name:
@@ -35,31 +32,38 @@ parameters:
   eval_label_column_name:
     value: labels
   output_dir:
-    value: ./
+    value: "/raid/yoach/tmp/"
   remove_unused_columns:
     value: false
   learning_rate:
-    value: 1e-4
+    distribution: log_uniform_values
+    min: 3e-6
+    max: 0.01
   lr_scheduler_type:
-    value: constant_with_warmup
+    value: constant
   max_length_seconds:
     value: 20  # give some data diversity for longer audio samples
   min_length_seconds:
-    value: 7
+    value: 5
   attention_mask:
-    value: true
-  warmup_steps:
-    value: 100
-  max_steps:
-    value: 2000
+    values:
+    - true
+  num_train_epochs:
+    values:
+      - 2
+      - 5
+      - 10
+      - 20
+      - 40
+      - 60
   per_device_train_batch_size:
     value: 32
   per_device_eval_batch_size:
-    value: 16
+    value: 32
   preprocessing_num_workers:
-    value: 4
+    value: 8
   dataloader_num_workers:
-    value: 4
+    value: 8
   logging_strategy:
     value: steps
   logging_steps:
@@ -67,20 +71,28 @@ parameters:
   evaluation_strategy:
     value: steps
   eval_steps:
-    value: 1000
+    value: 2000
   save_strategy:
-    value: steps
+    value: "no"
   save_steps:
     value: 2000
   metric_for_best_model:
     value: accuracy
-  freeze_base_model:
-    values:
-     - false
-     - true
-  group_by_length:
-    value: false  # TODO(SG): batch by length
   push_to_hub:
     value: false
+  use_weighted_layer_sum:
+    value: false
+  freeze_base_model:
+    value: true
+  max_samples_per_label:
+    value: 10000
+  save_to_disk:
+    value: "/raid/yoach/tmp_dataset_accents/" 
+  temporary_save_to_disk:
+    value: "/raid/yoach/tmp_hidden_states/"
+  use_last_embedding_layer:
+    value: true
+  filter_threshold:
+    value: "0.001"
 program: run_audio_classification.py
-project: mms-lid-accent-classification
+project: mms-lid-accent-classification-v2

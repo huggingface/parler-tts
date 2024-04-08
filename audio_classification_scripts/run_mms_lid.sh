@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-python run_audio_classification.py \
-    --model_name_or_path "facebook/mms-lid-126" \
+CUDA_VISIBLE_DEVICES=2 python run_audio_classification_one_layer.py \
+    --model_name_or_path "facebook/mms-lid-4017" \
     --train_dataset_name "stable-speech/concatenated-normalized-accent-dataset" \
     --train_dataset_config_name "default" \
     --train_split_name "train" \
@@ -10,11 +10,11 @@ python run_audio_classification.py \
     --eval_dataset_config_name "default" \
     --eval_split_name "test" \
     --eval_label_column_name "labels" \
-    --output_dir "./" \
+    --output_dir "./tmp/" \
     --do_train \
     --do_eval \
     --overwrite_output_dir \
-    --remove_unused_columns False \
+    --remove_unused_columns false \
     --fp16 \
     --fp16_full_eval \
     --learning_rate 1e-4 \
@@ -30,9 +30,11 @@ python run_audio_classification.py \
     --logging_strategy "steps" \
     --logging_steps 10 \
     --evaluation_strategy "steps" \
-    --eval_steps 500 \
+    --eval_steps 300 \
     --save_strategy "no" \
     --save_steps 2000 \
-    --freeze_base_model True \
-    --push_to_hub False \
-    --trust_remote_code
+    --freeze_base_model true \
+    --freeze_feature_encoder true \
+    --push_to_hub false \
+    --trust_remote_code \
+    --use_weighted_layer_sum true \
