@@ -1,4 +1,4 @@
-from stable_speech import StableSpeechConfig, StableSpeechForCausalLM, StableSpeechForConditionalGeneration, StableSpeechDecoderConfig
+from parler_tts import ParlerTTSConfig, ParlerTTSForCausalLM, ParlerTTSForConditionalGeneration, ParlerTTSDecoderConfig
 from transformers import T5Config, EncodecConfig
 from transformers import AutoConfig
 
@@ -12,7 +12,7 @@ encodec = AutoConfig.from_pretrained(encodec_version)
 encodec_vocab_size = encodec.codebook_size
 
 
-decoder_config = StableSpeechDecoderConfig(
+decoder_config = ParlerTTSDecoderConfig(
     vocab_size=encodec_vocab_size+1,
     max_position_embeddings=2048,
     num_hidden_layers=4,
@@ -34,13 +34,13 @@ decoder_config = StableSpeechDecoderConfig(
         
 
         
-decoder = StableSpeechForCausalLM(decoder_config)
+decoder = ParlerTTSForCausalLM(decoder_config)
 
 decoder.save_pretrained("/raid/yoach/tmp/artefacts/decoder/")
 
 
 
-model = StableSpeechForConditionalGeneration.from_sub_models_pretrained(
+model = ParlerTTSForConditionalGeneration.from_sub_models_pretrained(
     text_encoder_pretrained_model_name_or_path=text_model,
     audio_encoder_pretrained_model_name_or_path=encodec_version,
     decoder_pretrained_model_name_or_path="/raid/yoach/tmp/artefacts/decoder/",

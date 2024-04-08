@@ -41,7 +41,7 @@ with open(os.path.join(here, "README.md"), encoding="utf-8") as f:
     long_description = f.read()
 
 # read version
-with open(os.path.join(here, "stable_speech", "__init__.py"), encoding="utf-8") as f:
+with open(os.path.join(here, "parler_tts", "__init__.py"), encoding="utf-8") as f:
     for line in f:
         if line.startswith("__version__"):
             version = line.split("=")[1].strip().strip('"')
@@ -50,7 +50,7 @@ with open(os.path.join(here, "stable_speech", "__init__.py"), encoding="utf-8") 
         raise RuntimeError("Unable to find version string.")
 
 setuptools.setup(
-    name="stable_speech",
+    name="parler_tts",
     version=version,
     description="Toolkit for reproducing Stability AI's text-to-speech model.",
     long_description=long_description,

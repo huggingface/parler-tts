@@ -63,7 +63,7 @@ from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 from transformers.integrations import is_wandb_available
 from transformers import AutoConfig, AutoModel
-from stable_speech import DACConfig, DACModel
+from parler_tts import DACConfig, DACModel
 from transformers.modeling_outputs import BaseModelOutput
 AutoConfig.register("dac", DACConfig)
 AutoModel.register(DACConfig, DACModel)
@@ -73,7 +73,7 @@ from accelerate import Accelerator
 from accelerate.utils import set_seed, AutocastKwargs, InitProcessGroupKwargs, TorchDynamoPlugin
 from accelerate.utils.memory import release_memory
 
-from stable_speech import StableSpeechForConditionalGeneration, StableSpeechConfig, apply_delay_pattern_mask, build_delay_pattern_mask
+from parler_tts import ParlerTTSForConditionalGeneration, ParlerTTSConfig, apply_delay_pattern_mask, build_delay_pattern_mask
 
 if is_wandb_available():
     from wandb import Audio
@@ -455,7 +455,7 @@ class DataTrainingArguments:
         }
     )
     wandb_project: str = field(
-        default="stable-speech",
+        default="parler-speech",
         metadata={"help": "The name of the wandb project."},
     )
     save_to_disk: str = field(
@@ -480,7 +480,7 @@ class DataTrainingArguments:
     )
     
 @dataclass
-class StableSpeechTrainingArguments(Seq2SeqTrainingArguments):
+class ParlerTTSTrainingArguments(Seq2SeqTrainingArguments):
     dtype: Optional[str] = field(
         default="float32",
         metadata={
@@ -525,7 +525,7 @@ class DataCollatorEncodecWithPadding:
 
     
 @dataclass
-class DataCollatorStableSpeechWithPadding:
+class DataCollatorParlerTTSWithPadding:
     """
     Data collator that will dynamically pad the inputs received.
     Args:
@@ -716,14 +716,14 @@ def load_multiple_datasets(
                 
                 # TODO(YL): I forgot to create unique ids for MLS english.
                 # To iterate faster, I bypass the original id check and do another one. - Done once because assuming it won't change next time
-                # if dataset_dict["name"] == "stable-speech/mls_eng_10k":
+                # if dataset_dict["name"] == "parler-tts/mls_eng_10k":
                 #     def concat_ids(book_id, speaker_id, begin_time):
                 #         return {"id": f"{book_id}_{speaker_id}_{str(begin_time).replace('.', '_')}"}
                 #     dataset = dataset.map(concat_ids, input_columns=["book_id", "speaker_id", "begin_time"], num_proc=24)
                 #     metadata_dataset = metadata_dataset.map(concat_ids, input_columns=["book_id", "speaker_id", "begin_time"], num_proc=24)
                 #     metadata_dataset = metadata_dataset.rename_column(id_column_name, f"metadata_{id_column_name}")
 
-                if dataset_dict["name"] != "stable-speech/mls_eng_10k":
+                if dataset_dict["name"] != "parler-tts/mls_eng_10k":
                     if id_column_name is not None and id_column_name not in dataset.column_names:
                         raise ValueError(
                             f"id_column_name={id_column_name} but has not been found in the dataset columns"
@@ -751,7 +751,7 @@ def load_multiple_datasets(
 
                 dataset = concatenate_datasets([dataset, metadata_dataset], axis=1)
                 
-                if id_column_name is not None and dataset_dict["name"] != "stable-speech/mls_eng_10k":
+                if id_column_name is not None and dataset_dict["name"] != "parler-tts/mls_eng_10k":
                     if len(dataset.filter(lambda id1, id2: id1!=id2, input_columns=[id_column_name, f"metadata_{id_column_name}"])) != 0:
                         raise ValueError(f"Concatenate didn't work. Some ids don't correspond on dataset {dataset_dict['name']}")
 
@@ -785,7 +785,7 @@ def main():
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
 
-    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, StableSpeechTrainingArguments))
+    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, ParlerTTSTrainingArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
         # let's parse it to get our arguments.
@@ -795,7 +795,7 @@ def main():
 
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
-    send_example_telemetry("run_stable_speech", model_args, data_args)
+    send_example_telemetry("run_parler_tts", model_args, data_args)
     
     if training_args.dtype == "float16":
         mixed_precision = "fp16"
@@ -996,7 +996,7 @@ def main():
 
     # 3. Next, let's load the config.
     # TODO(YL): add the option to create the config from scratch
-    config = StableSpeechConfig.from_pretrained(
+    config = ParlerTTSConfig.from_pretrained(
         model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
         token=data_args.token,
@@ -1011,7 +1011,7 @@ def main():
     })
     
     # create model + TODO(YL): not from_pretrained probably
-    model = StableSpeechForConditionalGeneration.from_pretrained(
+    model = ParlerTTSForConditionalGeneration.from_pretrained(
         model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
         config=config,
@@ -1353,7 +1353,7 @@ def main():
     )
 
     # Instantiate custom data collator
-    data_collator = DataCollatorStableSpeechWithPadding(
+    data_collator = DataCollatorParlerTTSWithPadding(
         audio_feature_extractor=feature_extractor, feature_extractor_input_name=feature_extractor_input_name, prompt_tokenizer=prompt_tokenizer, description_tokenizer=description_tokenizer, pad_to_multiple_of=data_args.pad_to_multiple_of,
         padding=padding, prompt_max_length=data_args.max_prompt_token_length, description_max_length=data_args.max_description_token_length, audio_max_length = audio_max_length
     )

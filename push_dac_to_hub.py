@@ -4,7 +4,7 @@ import dac
 model_path = dac.utils.download(model_type="44khz")
 model = dac.DAC.load(model_path)
 
-from stable_speech import DACConfig, DACModel
+from parler_tts import DACConfig, DACModel
 
 hf_dac = DACModel(DACConfig())
 hf_dac.model.load_state_dict(model.state_dict())

@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" PyTorch StableSpeech model."""
+""" PyTorch ParlerTTS model."""
 import copy
 import inspect
 import math
@@ -44,7 +44,7 @@ from transformers.utils import (
     replace_return_docstrings,
 )
 
-from .configuration_stable_speech import StableSpeechConfig, StableSpeechDecoderConfig
+from .configuration_parler_tts import ParlerTTSConfig, ParlerTTSDecoderConfig
 
 
 if TYPE_CHECKING:
@@ -52,12 +52,12 @@ if TYPE_CHECKING:
 
 logger = logging.get_logger(__name__)
 
-_CONFIG_FOR_DOC = "StableSpeechConfig"
-_CHECKPOINT_FOR_DOC = "facebook/stable_speech-small"
+_CONFIG_FOR_DOC = "ParlerTTSConfig"
+_CHECKPOINT_FOR_DOC = "facebook/parler_tts-small"
 
 MUSICGEN_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "facebook/stable_speech-small",
-    # See all StableSpeech models at https://huggingface.co/models?filter=stable_speech
+    "facebook/parler_tts-small",
+    # See all ParlerTTS models at https://huggingface.co/models?filter=parler_tts
 ]
 
 def apply_delay_pattern_mask(input_ids, decoder_pad_token_mask):
@@ -133,7 +133,7 @@ def build_delay_pattern_mask(input_ids: torch.LongTensor, bos_token_id: int, pad
     return input_ids, pattern_mask
 
 @dataclass
-class StableSpeechUnconditionalInput(ModelOutput):
+class ParlerTTSUnconditionalInput(ModelOutput):
     """
     Args:
         encoder_outputs  (`Tuple[torch.FloatTensor]` of length 1, with tensor shape `(batch_size, sequence_length, hidden_size)`):
@@ -170,8 +170,8 @@ def shift_tokens_right(input_ids: torch.Tensor, pad_token_id: int, decoder_start
     return shifted_input_ids
 
 
-# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenSinusoidalPositionalEmbedding with Musicgen->StableSpeech
-class StableSpeechSinusoidalPositionalEmbedding(nn.Module):
+# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenSinusoidalPositionalEmbedding with Musicgen->ParlerTTS
+class ParlerTTSSinusoidalPositionalEmbedding(nn.Module):
     """This module produces sinusoidal positional embeddings of any length."""
 
     def __init__(self, num_positions: int, embedding_dim: int):
@@ -217,8 +217,8 @@ class StableSpeechSinusoidalPositionalEmbedding(nn.Module):
         return self.weights.index_select(0, position_ids.view(-1)).detach()
 
 
-# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenAttention with Musicgen->StableSpeech
-class StableSpeechAttention(nn.Module):
+# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenAttention with Musicgen->ParlerTTS
+class ParlerTTSAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
     def __init__(
@@ -229,7 +229,7 @@ class StableSpeechAttention(nn.Module):
         is_decoder: bool = False,
         bias: bool = True,
         is_causal: bool = False,
-        config: Optional[StableSpeechConfig] = None,
+        config: Optional[ParlerTTSConfig] = None,
     ):
         super().__init__()
         self.embed_dim = embed_dim
@@ -376,13 +376,13 @@ class StableSpeechAttention(nn.Module):
         return attn_output, attn_weights_reshaped, past_key_value
 
 
-# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenDecoderLayer with Musicgen->StableSpeech
-class StableSpeechDecoderLayer(nn.Module):
-    def __init__(self, config: StableSpeechDecoderConfig):
+# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenDecoderLayer with Musicgen->ParlerTTS
+class ParlerTTSDecoderLayer(nn.Module):
+    def __init__(self, config: ParlerTTSDecoderConfig):
         super().__init__()
         self.embed_dim = config.hidden_size
 
-        self.self_attn = StableSpeechAttention(
+        self.self_attn = ParlerTTSAttention(
             embed_dim=self.embed_dim,
             num_heads=config.num_attention_heads,
             dropout=config.attention_dropout,
@@ -394,7 +394,7 @@ class StableSpeechDecoderLayer(nn.Module):
         self.activation_dropout = config.activation_dropout
 
         self.self_attn_layer_norm = nn.LayerNorm(self.embed_dim)
-        self.encoder_attn = StableSpeechAttention(
+        self.encoder_attn = ParlerTTSAttention(
             self.embed_dim,
             config.num_attention_heads,
             dropout=config.attention_dropout,
@@ -496,17 +496,17 @@ class StableSpeechDecoderLayer(nn.Module):
         return outputs
 
 
-# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenPreTrainedModel with Musicgen->StableSpeech
-class StableSpeechPreTrainedModel(PreTrainedModel):
+# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenPreTrainedModel with Musicgen->ParlerTTS
+class ParlerTTSPreTrainedModel(PreTrainedModel):
     """
     An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
     models.
     """
 
-    config_class = StableSpeechDecoderConfig
+    config_class = ParlerTTSDecoderConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
-    _no_split_modules = ["StableSpeechDecoderLayer", "StableSpeechAttention"]
+    _no_split_modules = ["ParlerTTSDecoderLayer", "ParlerTTSAttention"]
 
     def _init_weights(self, module):
         std = self.config.initializer_factor
@@ -522,7 +522,7 @@ class StableSpeechPreTrainedModel(PreTrainedModel):
 
 MUSICGEN_START_DOCSTRING = r"""
 
-    The StableSpeech model was proposed in [Simple and Controllable Music Generation](https://arxiv.org/abs/2306.05284) by
+    The ParlerTTS model was proposed in [Simple and Controllable Music Generation](https://arxiv.org/abs/2306.05284) by
     Jade Copet, Felix Kreuk, Itai Gat, Tal Remez, David Kant, Gabriel Synnaeve, Yossi Adi, Alexandre Défossez. It is an
     encoder decoder transformer trained on the task of conditional music generation
 
@@ -535,7 +535,7 @@ MUSICGEN_START_DOCSTRING = r"""
     and behavior.
 
     Parameters:
-        config ([`StableSpeechConfig`]): Model configuration class with all the parameters of the model.
+        config ([`ParlerTTSConfig`]): Model configuration class with all the parameters of the model.
             Initializing with a config file does not load the weights associated with the model, only the
             configuration. Check out the [`~PreTrainedModel.from_pretrained`] method to load the model weights.
 """
@@ -716,13 +716,13 @@ MUSICGEN_DECODER_INPUTS_DOCSTRING = r"""
 """
 
 
-# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenDecoder with Musicgen->StableSpeech
-class StableSpeechDecoder(StableSpeechPreTrainedModel):
+# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenDecoder with Musicgen->ParlerTTS
+class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
     """
-    Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`StableSpeechDecoderLayer`]
+    Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`ParlerTTSDecoderLayer`]
     """
 
-    def __init__(self, config: StableSpeechDecoderConfig):
+    def __init__(self, config: ParlerTTSDecoderConfig):
         super().__init__(config)
         self.dropout = config.dropout
         self.layerdrop = config.layerdrop
@@ -737,12 +737,12 @@ class StableSpeechDecoder(StableSpeechPreTrainedModel):
             [nn.Embedding(embed_dim, config.hidden_size) for _ in range(config.num_codebooks)]
         )
 
-        self.embed_positions = StableSpeechSinusoidalPositionalEmbedding(
+        self.embed_positions = ParlerTTSSinusoidalPositionalEmbedding(
             config.max_position_embeddings,
             config.hidden_size,
         )
 
-        self.layers = nn.ModuleList([StableSpeechDecoderLayer(config) for _ in range(config.num_hidden_layers)])
+        self.layers = nn.ModuleList([ParlerTTSDecoderLayer(config) for _ in range(config.num_hidden_layers)])
         self.layer_norm = nn.LayerNorm(config.hidden_size)
 
         self.gradient_checkpointing = False
@@ -930,14 +930,14 @@ class StableSpeechDecoder(StableSpeechPreTrainedModel):
 
 
 @add_start_docstrings(
-    "The bare StableSpeech decoder model outputting raw hidden-states without any specific head on top.",
+    "The bare ParlerTTS decoder model outputting raw hidden-states without any specific head on top.",
     MUSICGEN_START_DOCSTRING,
 )
-# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenModel with Musicgen->StableSpeech
-class StableSpeechModel(StableSpeechPreTrainedModel):
-    def __init__(self, config: StableSpeechDecoderConfig):
+# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenModel with Musicgen->ParlerTTS
+class ParlerTTSModel(ParlerTTSPreTrainedModel):
+    def __init__(self, config: ParlerTTSDecoderConfig):
         super().__init__(config)
-        self.decoder = StableSpeechDecoder(config)
+        self.decoder = ParlerTTSDecoder(config)
         # Initialize weights and apply final processing
         self.post_init()
 
@@ -1006,15 +1006,15 @@ class StableSpeechModel(StableSpeechPreTrainedModel):
 
 
 @add_start_docstrings(
-    "The Stable Speech decoder model with a language modelling head on top.",
+    "The Parler-TTS decoder model with a language modelling head on top.",
     MUSICGEN_START_DOCSTRING,
 )
-# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenForCausalLM with Musicgen->StableSpeech
-class StableSpeechForCausalLM(StableSpeechPreTrainedModel):
-    def __init__(self, config: StableSpeechDecoderConfig):
+# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenForCausalLM with Musicgen->ParlerTTS
+class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
+    def __init__(self, config: ParlerTTSDecoderConfig):
         super().__init__(config)
 
-        self.model = StableSpeechModel(config)
+        self.model = ParlerTTSModel(config)
 
         self.num_codebooks = config.num_codebooks
         self.lm_heads = nn.ModuleList(
@@ -1379,7 +1379,7 @@ class StableSpeechForCausalLM(StableSpeechPreTrainedModel):
             )
 
         # 6. Prepare `input_ids` which will be used for auto-regressive generation
-        # Build the delay pattern mask for offsetting each codebook prediction by 1 (this behaviour is specific to Stable Speech)
+        # Build the delay pattern mask for offsetting each codebook prediction by 1 (this behaviour is specific to Parler-TTS)
         input_ids, delay_pattern_mask = self.build_delay_pattern_mask(
             input_ids,
             bos_token_id=generation_config.bos_token_id,
@@ -1498,29 +1498,29 @@ class StableSpeechForCausalLM(StableSpeechPreTrainedModel):
 
 
 @add_start_docstrings(
-    "The composite Stable Speech model with a text encoder, audio encoder and StableSpeech decoder, "
+    "The composite Parler-TTS model with a text encoder, audio encoder and ParlerTTS decoder, "
     "for music generation tasks with one or both of text and audio prompts.",
     MUSICGEN_START_DOCSTRING,
 )
-class StableSpeechForConditionalGeneration(PreTrainedModel):
-    config_class = StableSpeechConfig
+class ParlerTTSForConditionalGeneration(PreTrainedModel):
+    config_class = ParlerTTSConfig
     base_model_prefix = "encoder_decoder"
     main_input_name = "input_ids"
     supports_gradient_checkpointing = True
 
     def __init__(
         self,
-        config: Optional[StableSpeechConfig] = None,
+        config: Optional[ParlerTTSConfig] = None,
         text_encoder: Optional[PreTrainedModel] = None,
         audio_encoder: Optional[PreTrainedModel] = None,
-        decoder: Optional[StableSpeechForCausalLM] = None,
+        decoder: Optional[ParlerTTSForCausalLM] = None,
     ):
         if config is None and (text_encoder is None or audio_encoder is None or decoder is None):
             raise ValueError(
-                "Either a configuration has to be provided, or all three of text encoder, audio encoder and Stable Speech decoder."
+                "Either a configuration has to be provided, or all three of text encoder, audio encoder and Parler-TTS decoder."
             )
         if config is None:
-            config = StableSpeechConfig.from_sub_models_config(
+            config = ParlerTTSConfig.from_sub_models_config(
                 text_encoder.config, audio_encoder.config, decoder.config
             )
         else:
@@ -1530,7 +1530,7 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
         if config.decoder.cross_attention_hidden_size is not None:
             if config.decoder.cross_attention_hidden_size != config.text_encoder.hidden_size:
                 raise ValueError(
-                    "If `cross_attention_hidden_size` is specified in the Stable Speech decoder's configuration, it has to be equal"
+                    "If `cross_attention_hidden_size` is specified in the Parler-TTS decoder's configuration, it has to be equal"
                     f" to the text encoder's `hidden_size`. Got {config.decoder.cross_attention_hidden_size} for"
                     f" `config.decoder.cross_attention_hidden_size` and {config.text_encoder.hidden_size} for"
                     " `config.text_encoder.hidden_size`."
@@ -1550,7 +1550,7 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
             audio_encoder = AutoModel.from_config(config.audio_encoder)
 
         if decoder is None:
-            decoder = StableSpeechForCausalLM(config.decoder)
+            decoder = ParlerTTSForCausalLM(config.decoder)
 
         self.text_encoder = text_encoder
         self.audio_encoder = audio_encoder
@@ -1652,15 +1652,15 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
         Example:
 
         ```python
-        >>> from transformers import StableSpeechForConditionalGeneration
+        >>> from transformers import ParlerTTSForConditionalGeneration
 
-        >>> model = StableSpeechForConditionalGeneration.from_pretrained("facebook/stable_speech-small")
+        >>> model = ParlerTTSForConditionalGeneration.from_pretrained("facebook/parler_tts-small")
         ```"""
 
         # At the moment fast initialization is not supported for composite models
         if kwargs.get("_fast_init", False):
             logger.warning(
-                "Fast initialization is currently not supported for StableSpeechForConditionalGeneration. "
+                "Fast initialization is currently not supported for ParlerTTSForConditionalGeneration. "
                 "Falling back to slow initialization..."
             )
         kwargs["_fast_init"] = False
@@ -1677,7 +1677,7 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
         **kwargs,
     ) -> PreTrainedModel:
         r"""
-        Instantiate a text encoder, an audio encoder, and a Stable Speech decoder from one, two or three base classes of the
+        Instantiate a text encoder, an audio encoder, and a Parler-TTS decoder from one, two or three base classes of the
         library from pretrained model checkpoints.
 
 
@@ -1708,7 +1708,7 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
 
                     - A string, the *model id* of a pretrained model hosted inside a model repo on huggingface.co.
                       Valid model ids can be located at the root-level, like `gpt2`, or namespaced under a user or
-                      organization name, like `facebook/stable_speech-small`.
+                      organization name, like `facebook/parler_tts-small`.
                     - A path to a *directory* containing model weights saved using
                       [`~PreTrainedModel.save_pretrained`], e.g., `./my_model_directory/`.
 
@@ -1731,18 +1731,18 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
         Example:
 
         ```python
-        >>> from transformers import StableSpeechForConditionalGeneration
+        >>> from transformers import ParlerTTSForConditionalGeneration
 
-        >>> # initialize a stable_speech model from a t5 text encoder, encodec audio encoder, and stable_speech decoder
-        >>> model = StableSpeechForConditionalGeneration.from_sub_models_pretrained(
+        >>> # initialize a parler_tts model from a t5 text encoder, encodec audio encoder, and parler_tts decoder
+        >>> model = ParlerTTSForConditionalGeneration.from_sub_models_pretrained(
         ...     text_encoder_pretrained_model_name_or_path="t5-base",
         ...     audio_encoder_pretrained_model_name_or_path="facebook/encodec_24khz",
-        ...     decoder_pretrained_model_name_or_path="facebook/stable_speech-small",
+        ...     decoder_pretrained_model_name_or_path="facebook/parler_tts-small",
         ... )
         >>> # saving model after fine-tuning
-        >>> model.save_pretrained("./stable_speech-ft")
+        >>> model.save_pretrained("./parler_tts-ft")
         >>> # load fine-tuned model
-        >>> model = StableSpeechForConditionalGeneration.from_pretrained("./stable_speech-ft")
+        >>> model = ParlerTTSForConditionalGeneration.from_pretrained("./parler_tts-ft")
         ```"""
 
         kwargs_text_encoder = {
@@ -1836,11 +1836,11 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
 
             if "config" not in kwargs_decoder:
                 # TODO: reput AutoConfig once added to transformers
-                decoder_config, kwargs_decoder = StableSpeechDecoderConfig.from_pretrained(
+                decoder_config, kwargs_decoder = ParlerTTSDecoderConfig.from_pretrained(
                     decoder_pretrained_model_name_or_path, **kwargs_decoder, return_unused_kwargs=True
                 )
 
-                if isinstance(decoder_config, StableSpeechConfig):
+                if isinstance(decoder_config, ParlerTTSConfig):
                     decoder_config = decoder_config.decoder
 
                 if decoder_config.is_decoder is False or decoder_config.add_cross_attention is False:
@@ -1863,10 +1863,10 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
                     "`decoder_config` to `.from_sub_models_pretrained(...)`"
                 )
 
-            decoder = StableSpeechForCausalLM.from_pretrained(decoder_pretrained_model_name_or_path, **kwargs_decoder)
+            decoder = ParlerTTSForCausalLM.from_pretrained(decoder_pretrained_model_name_or_path, **kwargs_decoder)
 
         # instantiate config with corresponding kwargs
-        config = StableSpeechConfig.from_sub_models_config(
+        config = ParlerTTSConfig.from_sub_models_config(
             text_encoder.config, audio_encoder.config, decoder.config, **kwargs
         )
         return cls(text_encoder=text_encoder, audio_encoder=audio_encoder, decoder=decoder, config=config)
@@ -1900,11 +1900,11 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
 
         Examples:
         ```python
-        >>> from transformers import AutoProcessor, StableSpeechForConditionalGeneration
+        >>> from transformers import AutoProcessor, ParlerTTSForConditionalGeneration
         >>> import torch
 
-        >>> processor = AutoProcessor.from_pretrained("facebook/stable_speech-small")
-        >>> model = StableSpeechForConditionalGeneration.from_pretrained("facebook/stable_speech-small")
+        >>> processor = AutoProcessor.from_pretrained("facebook/parler_tts-small")
+        >>> model = ParlerTTSForConditionalGeneration.from_pretrained("facebook/parler_tts-small")
 
         >>> inputs = processor(
         ...     text=["80s pop track with bassy drums and synth", "90s rock song with loud guitars and heavy drums"],
@@ -2479,7 +2479,7 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
                 " increasing `max_new_tokens`."
             )
 
-        # build the delay pattern mask for offsetting each codebook prediction by 1 (this behaviour is specific to Stable Speech)
+        # build the delay pattern mask for offsetting each codebook prediction by 1 (this behaviour is specific to Parler-TTS)
         input_ids, decoder_delay_pattern_mask = self.decoder.build_delay_pattern_mask(
             input_ids,
             bos_token_id=generation_config.bos_token_id,
@@ -2649,9 +2649,9 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
 
         Example:
         ```python
-        >>> from transformers import StableSpeechForConditionalGeneration
+        >>> from transformers import ParlerTTSForConditionalGeneration
 
-        >>> model = StableSpeechForConditionalGeneration.from_pretrained("facebook/stable_speech-small")
+        >>> model = ParlerTTSForConditionalGeneration.from_pretrained("facebook/parler_tts-small")
 
         >>> # get the unconditional (or 'null') inputs for the model
         >>> unconditional_inputs = model.get_unconditional_inputs(num_samples=1)
@@ -2663,7 +2663,7 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
 
         attention_mask = torch.zeros((num_samples, 1), device=self.device, dtype=torch.long)
 
-        return StableSpeechUnconditionalInput(
+        return ParlerTTSUnconditionalInput(
             encoder_outputs=(last_hidden_state,),
             attention_mask=attention_mask,
             guidance_scale=1.0,
