@@ -1,4 +1,4 @@
-# Copyright 2023 The HuggingFace Team. All rights reserved.
+# Copyright 2024 The HuggingFace Team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,27 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 import os
-
 import setuptools
 
 
 _deps = [
     "transformers>=4.34.0",
-    "datasets[audio]>=2.14.5",
     "torch",
-    "accelerate",
-    "evaluate",
     "sentencepiece",
     "descript-audio-codec",
-    "jiwer",
 ]
 
 _extras_dev_deps = [
     "black~=23.1",
     "isort>=5.5.4",
     "ruff>=0.0.241,<=0.0.259",
+]
+
+_extras_training_deps = [
+    "jiwer",
+    "wandb",
+    "accelerate",
+    "evaluate",
+    "datasets[audio]>=2.14.5",
 ]
 
 here = os.path.abspath(os.path.dirname(__file__))
@@ -59,5 +61,6 @@ setuptools.setup(
     install_requires=_deps,
     extras_require={
         "dev": [_extras_dev_deps],
+        "train": [_extras_training_deps],
     },
 )

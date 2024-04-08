@@ -1,3 +1,6 @@
+__version__ = "0.1"
+
+
 from .configuration_parler_tts import ParlerTTSConfig, ParlerTTSDecoderConfig
 from .modeling_parler_tts import (
     ParlerTTSForCausalLM,
