@@ -1,5 +1,5 @@
-
 import dac
+
 # Download a model
 model_path = dac.utils.download(model_type="44khz")
 model = dac.DAC.load(model_path)
@@ -10,6 +10,7 @@ hf_dac = DACModel(DACConfig())
 hf_dac.model.load_state_dict(model.state_dict())
 
 from transformers import AutoConfig, AutoModel
+
 AutoConfig.register("dac", DACConfig)
 AutoModel.register(DACConfig, DACModel)
 

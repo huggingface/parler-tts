@@ -81,7 +81,7 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
 
     def __init__(
         self,
-        vocab_size=2049, # vocab size = 2048 (encodec vocab size) + 1 (eos)
+        vocab_size=2049,  # vocab size = 2048 (encodec vocab size) + 1 (eos)
         max_position_embeddings=2048,
         num_hidden_layers=24,
         ffn_dim=4096,

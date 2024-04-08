@@ -65,6 +65,7 @@ from transformers.integrations import is_wandb_available
 from transformers import AutoConfig, AutoModel
 from parler_tts import DACConfig, DACModel
 from transformers.modeling_outputs import BaseModelOutput
+
 AutoConfig.register("dac", DACConfig)
 AutoModel.register(DACConfig, DACModel)
 
@@ -73,7 +74,12 @@ from accelerate import Accelerator
 from accelerate.utils import set_seed, AutocastKwargs, InitProcessGroupKwargs, TorchDynamoPlugin
 from accelerate.utils.memory import release_memory
 
-from parler_tts import ParlerTTSForConditionalGeneration, ParlerTTSConfig, apply_delay_pattern_mask, build_delay_pattern_mask
+from parler_tts import (
+    ParlerTTSForConditionalGeneration,
+    ParlerTTSConfig,
+    apply_delay_pattern_mask,
+    build_delay_pattern_mask,
+)
 
 if is_wandb_available():
     from wandb import Audio
@@ -90,7 +96,9 @@ logger = logging.getLogger(__name__)
 def list_field(default=None, metadata=None):
     return field(default_factory=lambda: default, metadata=metadata)
 
+
 _RE_CHECKPOINT = re.compile(r"^checkpoint-(\d+)-epoch-(\d+)$")
+
 
 def get_last_checkpoint(folder):
     content = os.listdir(folder)
@@ -102,6 +110,7 @@ def get_last_checkpoint(folder):
     if len(checkpoints) == 0:
         return
     return os.path.join(folder, max(checkpoints, key=lambda x: int(_RE_CHECKPOINT.search(x).groups()[0])))
+
 
 def sorted_checkpoints(output_dir=None, checkpoint_prefix="checkpoint") -> List[str]:
     """Helper function to sort saved checkpoints from oldest to newest."""
@@ -118,6 +127,7 @@ def sorted_checkpoints(output_dir=None, checkpoint_prefix="checkpoint") -> List[
     checkpoints_sorted = [checkpoint[1] for checkpoint in checkpoints_sorted]
     return checkpoints_sorted
 
+
 def rotate_checkpoints(save_total_limit=None, output_dir=None, checkpoint_prefix="checkpoint") -> None:
     """Helper function to delete old checkpoints."""
     if save_total_limit is None or save_total_limit <= 0:
@@ -132,6 +142,7 @@ def rotate_checkpoints(save_total_limit=None, output_dir=None, checkpoint_prefix
     for checkpoint in checkpoints_to_be_deleted:
         logger.info(f"Deleting older checkpoint [{checkpoint}] due to args.save_total_limit")
         shutil.rmtree(checkpoint, ignore_errors=True)
+
 
 def log_metric(
     accelerator,
@@ -151,6 +162,7 @@ def log_metric(
     if learning_rate is not None:
         log_metrics[f"{prefix}/learning_rate"] = learning_rate
     accelerator.log(log_metrics, step=step)
+
 
 def log_pred(
     accelerator,
@@ -180,24 +192,29 @@ def log_pred(
             step=step,
             commit=False,
         )
-        
+
         # wandb can only loads 100 audios per step
-        wandb_tracker.log({
+        wandb_tracker.log(
+            {
                 "Speech samples": [
                     Audio(
                         audio,
                         caption=f"{pred_prompts[i]} --- DESCRIPTION: {pred_descriptions[i]}",
                         sample_rate=sampling_rate,
                     )
-                    for (i, audio) in enumerate(audios[:min(len(audios), 100)])
-                ]},
-                step=step)
+                    for (i, audio) in enumerate(audios[: min(len(audios), 100)])
+                ]
+            },
+            step=step,
+        )
+
 
 @dataclass
 class ModelArguments:
     """
     Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
     """
+
     # TODO: pretrain from scratch
     model_name_or_path: str = field(
         metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
@@ -212,7 +229,8 @@ class ModelArguments:
         default=None, metadata={"help": "Pretrained description tokenizer name or path if not the same as model_name"}
     )
     prompt_tokenizer_name: Optional[str] = field(
-        default=None, metadata={"help": "Pretrained prompt tokenizer name or path if not the same as description_tokenizer_name"}
+        default=None,
+        metadata={"help": "Pretrained prompt tokenizer name or path if not the same as description_tokenizer_name"},
     )
     cache_dir: Optional[str] = field(
         default=None,
@@ -251,10 +269,9 @@ class ModelArguments:
         metadata={"help": "Generation max length."},
     )
     bandwidth: float = field(
-        default=6, # TODO
+        default=6,  # TODO
         metadata={"help": "Audio encoder bandwidth."},
     )
-    
 
 
 @dataclass
@@ -329,15 +346,15 @@ class DataTrainingArguments:
             " librispeech and common voice, set `train_dataset_name='librispeech_asr+common_voice'`."
         },
     )
-    target_audio_column_name: str = field( # TODO
+    target_audio_column_name: str = field(  # TODO
         default="audio",
         metadata={"help": "The name of the dataset column containing the target audio data. Defaults to 'audio'"},
     )
-    description_column_name: str = field( #TODO
+    description_column_name: str = field(  # TODO
         default=None,
         metadata={"help": "The name of the dataset column containing the text data. Defaults to 'None'."},
     )
-    prompt_column_name: str = field( #TODO
+    prompt_column_name: str = field(  # TODO
         default=None,
         metadata={"help": "The name of the dataset column containing the text data. Defaults to 'None'."},
     )
@@ -382,28 +399,31 @@ class DataTrainingArguments:
         default=500, metadata={"help": "If set, max description lengths in number of characters."}
     )
     max_prompt_token_length: int = field(
-        default=None, metadata={
+        default=None,
+        metadata={
             "help": (
                 "If set, filter samples with prompts that are longer than `max_prompt_token_length` tokens."
                 "Also, used to set maximum prompt token length if `pad_to_max_length=True`."
             )
-        }
+        },
     )
     max_description_token_length: int = field(
-        default=None, metadata={
+        default=None,
+        metadata={
             "help": (
                 "If set, filter samples with descriptions that are longer than `max_description_token_length` tokens."
                 "Also, used to set maximum desription token length if `pad_to_max_length=True`."
             )
-        }    
+        },
     )
     pad_to_max_length: bool = field(
-        default=False, metadata={
-                "help": (
-                    "If `True`, pad audio, prompt and description to a maximum length set with respectively "
-                    "`max_duration_in_seconds`, `max_prompt_token_length`, `max_description_token_length`."
-                )
-            }
+        default=False,
+        metadata={
+            "help": (
+                "If `True`, pad audio, prompt and description to a maximum length set with respectively "
+                "`max_duration_in_seconds`, `max_prompt_token_length`, `max_description_token_length`."
+            )
+        },
     )
     preprocessing_only: bool = field(
         default=False,
@@ -444,16 +464,9 @@ class DataTrainingArguments:
     )
     add_audio_samples_to_wandb: bool = field(
         default=False,
-        metadata={
-            "help": "If set and if `wandb` in args.report_to, will add generated audio samples to wandb logs."
-        }
+        metadata={"help": "If set and if `wandb` in args.report_to, will add generated audio samples to wandb logs."},
     )
-    id_column_name: str = field(
-        default=None,
-        metadata={
-            "help": "id column name."
-        }
-    )
+    id_column_name: str = field(default=None, metadata={"help": "id column name."})
     wandb_project: str = field(
         default="parler-speech",
         metadata={"help": "The name of the wandb project."},
@@ -462,23 +475,15 @@ class DataTrainingArguments:
         default=None,
         metadata={
             "help": "If set, will save the dataset to this path if this is an empyt folder. If not empty, will load the datasets from it."
-        }
-    )
-    temporary_save_to_disk: str = field(
-        default=None,
-        metadata={
-            "help": "Temporarily save audio labels here."
-        }
-    )
-    pad_to_multiple_of: Optional[int] = field(
-        default=2,
-        metadata={
-            "help": (
-                "Pad to multiple of for tokenizers."
-            )
         },
     )
-    
+    temporary_save_to_disk: str = field(default=None, metadata={"help": "Temporarily save audio labels here."})
+    pad_to_multiple_of: Optional[int] = field(
+        default=2,
+        metadata={"help": ("Pad to multiple of for tokenizers.")},
+    )
+
+
 @dataclass
 class ParlerTTSTrainingArguments(Seq2SeqTrainingArguments):
     dtype: Optional[str] = field(
@@ -492,17 +497,14 @@ class ParlerTTSTrainingArguments(Seq2SeqTrainingArguments):
     )
     audio_encode_per_device_eval_batch_size: int = field(
         default=8,
-        metadata={
-            "help": (
-                "TODO"
-            )
-        },
+        metadata={"help": ("TODO")},
     )
+
 
 @dataclass
 class DataCollatorEncodecWithPadding:
     """
-    Data collator that will dynamically pad the inputs received to the longest sequence in the batch or 
+    Data collator that will dynamically pad the inputs received to the longest sequence in the batch or
     to `max_length` if `max_length` is set and `padding=max_length`.
     """
 
@@ -511,7 +513,6 @@ class DataCollatorEncodecWithPadding:
     feature_extractor_input_name: Optional[str] = "input_values"
     max_length: Optional[int] = None
     padding: Optional[str] = "longest"
-
 
     def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
         # split inputs and labels since they have to be of different lengths and need
@@ -523,7 +524,7 @@ class DataCollatorEncodecWithPadding:
         batch["len_audio"] = torch.tensor(len_audio).unsqueeze(1)
         return batch
 
-    
+
 @dataclass
 class DataCollatorParlerTTSWithPadding:
     """
@@ -563,40 +564,54 @@ class DataCollatorParlerTTSWithPadding:
     def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
         # split inputs and labels since they have to be of different lengths and need
         # different padding methods
-        
-        
-        labels = [torch.tensor(feature["labels"]).transpose(0,1) for feature in features]
+
+        labels = [torch.tensor(feature["labels"]).transpose(0, 1) for feature in features]
         # (bsz, seq_len, num_codebooks)
-        labels = torch.nn.utils.rnn.pad_sequence(labels,batch_first=True,padding_value=-100)
-        if self.audio_max_length is not None and self.padding=="max_length":
-            labels = torch.nn.functional.pad(labels, pad=(0,0,0,max(self.audio_max_length-labels.shape[1], 0)))
-        
+        labels = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=-100)
+        if self.audio_max_length is not None and self.padding == "max_length":
+            labels = torch.nn.functional.pad(labels, pad=(0, 0, 0, max(self.audio_max_length - labels.shape[1], 0)))
+
         input_ids = [{"input_ids": feature["input_ids"]} for feature in features]
 
-        input_ids = self.description_tokenizer.pad(input_ids, return_tensors="pt", padding=self.padding, pad_to_multiple_of=self.pad_to_multiple_of, max_length=self.description_max_length)
-        
-        batch= {"labels":labels, **input_ids}
-        
-        if self.audio_max_length is not None and self.padding=="max_length":
+        input_ids = self.description_tokenizer.pad(
+            input_ids,
+            return_tensors="pt",
+            padding=self.padding,
+            pad_to_multiple_of=self.pad_to_multiple_of,
+            max_length=self.description_max_length,
+        )
+
+        batch = {"labels": labels, **input_ids}
+
+        if self.audio_max_length is not None and self.padding == "max_length":
             # if we do torch.compile, we need to also specify the attention_mask
             decoder_attention_mask = torch.ones(labels.shape[:2], dtype=input_ids["attention_mask"].dtype)
             batch["decoder_attention_mask"] = decoder_attention_mask
 
         prompt_input_ids = [{"input_ids": feature["prompt_input_ids"]} for feature in features]
-        prompt_input_ids = self.prompt_tokenizer.pad(prompt_input_ids, return_tensors="pt", padding=self.padding, pad_to_multiple_of=self.pad_to_multiple_of, max_length=self.prompt_max_length)
-        
+        prompt_input_ids = self.prompt_tokenizer.pad(
+            prompt_input_ids,
+            return_tensors="pt",
+            padding=self.padding,
+            pad_to_multiple_of=self.pad_to_multiple_of,
+            max_length=self.prompt_max_length,
+        )
+
         batch["prompt_input_ids"] = prompt_input_ids["input_ids"]
         if "attention_mask" in prompt_input_ids:
             batch["prompt_attention_mask"] = prompt_input_ids["attention_mask"]
-        
+
         if self.feature_extractor_input_name in features[0]:
             # TODO (YL): verify that it works - IMPORTANT -> probably not working
-            input_values = [{self.feature_extractor_input_name: feature[self.feature_extractor_input_name]} for feature in features]
+            input_values = [
+                {self.feature_extractor_input_name: feature[self.feature_extractor_input_name]} for feature in features
+            ]
             input_values = self.feature_extractor.pad(input_values, return_tensors="pt")
-            
-            batch[self.feature_extractor_input_name: input_values]
-        
+
+            batch[self.feature_extractor_input_name : input_values]
+
         return batch
+
 
 def convert_dataset_str_to_list(
     dataset_names,
@@ -660,7 +675,7 @@ def load_multiple_datasets(
     accelerator: Accelerator,
     dataset_names: Union[List, str],
     dataset_config_names: Union[List, str],
-    metadata_dataset_names: Optional[str]=None,
+    metadata_dataset_names: Optional[str] = None,
     splits: Optional[Union[List, str]] = None,
     label_column_names: Optional[List] = None,
     stopping_strategy: Optional[str] = "first_exhausted",
@@ -696,16 +711,16 @@ def load_multiple_datasets(
                 **kwargs,
             )
             dataset_features = dataset.features.keys()
-            
+
             if sampling_rate is not None and audio_column_name is not None:
                 # resample target audio
-                dataset = dataset.cast_column(
-                    audio_column_name, datasets.features.Audio(sampling_rate=sampling_rate)
-                )
-            
+                dataset = dataset.cast_column(audio_column_name, datasets.features.Audio(sampling_rate=sampling_rate))
+
             metadata_dataset_name = dataset_dict["metadata_dataset_name"]
             if metadata_dataset_name is not None:
-                logger.info(f'Merging {dataset_dict["name"]} - {dataset_dict["split"]} with {metadata_dataset_name} - {dataset_dict["split"]}')
+                logger.info(
+                    f'Merging {dataset_dict["name"]} - {dataset_dict["split"]} with {metadata_dataset_name} - {dataset_dict["split"]}'
+                )
                 metadata_dataset = load_dataset(
                     metadata_dataset_name,
                     dataset_dict["config"],
@@ -713,7 +728,7 @@ def load_multiple_datasets(
                     streaming=streaming,
                     **kwargs,
                 )
-                
+
                 # TODO(YL): I forgot to create unique ids for MLS english.
                 # To iterate faster, I bypass the original id check and do another one. - Done once because assuming it won't change next time
                 # if dataset_dict["name"] == "parler-tts/mls_eng_10k":
@@ -728,32 +743,44 @@ def load_multiple_datasets(
                         raise ValueError(
                             f"id_column_name={id_column_name} but has not been found in the dataset columns"
                             f"- one of {', '.join(list(dataset.column_names))}."
-                            )
+                        )
                     if id_column_name is not None and id_column_name not in metadata_dataset.column_names:
                         raise ValueError(
                             f"id_column_name={id_column_name} but has not been found in the metadata dataset columns"
                             f"- one of {', '.join(list(metadata_dataset.column_names))}."
-                            )
+                        )
                     elif id_column_name is not None:
                         metadata_dataset = metadata_dataset.rename_column(id_column_name, f"metadata_{id_column_name}")
-                    
+
                 metadata_columns_to_remove = set(metadata_dataset.column_names).intersection(set(dataset.column_names))
-                
+
                 if prompt_column_name is not None:
                     # We might have applied some transformations to the prompts (e.g  punctuation restoration)
                     # so we make sure to remove it from the original dataset
                     if prompt_column_name in dataset.column_names:
-                        logger.info(f"REMOVE {prompt_column_name} from dataset {dataset_dict['name']} - dataset_dict['split']")
+                        logger.info(
+                            f"REMOVE {prompt_column_name} from dataset {dataset_dict['name']} - dataset_dict['split']"
+                        )
                         dataset.remove_columns(prompt_column_name)
 
                 metadata_columns_to_remove = set(metadata_dataset.column_names).intersection(set(dataset.column_names))
                 metadata_dataset = metadata_dataset.remove_columns(metadata_columns_to_remove)
 
                 dataset = concatenate_datasets([dataset, metadata_dataset], axis=1)
-                
+
                 if id_column_name is not None and dataset_dict["name"] != "parler-tts/mls_eng_10k":
-                    if len(dataset.filter(lambda id1, id2: id1!=id2, input_columns=[id_column_name, f"metadata_{id_column_name}"])) != 0:
-                        raise ValueError(f"Concatenate didn't work. Some ids don't correspond on dataset {dataset_dict['name']}")
+                    if (
+                        len(
+                            dataset.filter(
+                                lambda id1, id2: id1 != id2,
+                                input_columns=[id_column_name, f"metadata_{id_column_name}"],
+                            )
+                        )
+                        != 0
+                    ):
+                        raise ValueError(
+                            f"Concatenate didn't work. Some ids don't correspond on dataset {dataset_dict['name']}"
+                        )
 
                 dataset_features = dataset.features.keys()
 
@@ -778,8 +805,7 @@ def load_multiple_datasets(
 
     return interleaved_dataset
 
-    
-    
+
 def main():
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
@@ -796,16 +822,22 @@ def main():
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
     send_example_telemetry("run_parler_tts", model_args, data_args)
-    
+
     if training_args.dtype == "float16":
         mixed_precision = "fp16"
     elif training_args.dtype == "bfloat16":
         mixed_precision = "bf16"
     else:
         mixed_precision = "no"
-        
-    if data_args.pad_to_max_length and (data_args.max_duration_in_seconds is None or data_args.max_prompt_token_length is None or data_args.max_description_token_length is None):
-        raise ValueError("`pad_to_max_length` is `True` but one of the following parameters has not been set: `max_duration_in_seconds`, `max_prompt_token_length`, `max_description_token_length`")
+
+    if data_args.pad_to_max_length and (
+        data_args.max_duration_in_seconds is None
+        or data_args.max_prompt_token_length is None
+        or data_args.max_description_token_length is None
+    ):
+        raise ValueError(
+            "`pad_to_max_length` is `True` but one of the following parameters has not been set: `max_duration_in_seconds`, `max_prompt_token_length`, `max_description_token_length`"
+        )
 
     padding = "max_length" if data_args.pad_to_max_length else "longest"
 
@@ -813,8 +845,8 @@ def main():
     kwargs_handlers = [InitProcessGroupKwargs(timeout=timedelta(minutes=60))]
     if training_args.torch_compile:
         # TODO(YL): add more compile modes?
-        kwargs_handlers.append(TorchDynamoPlugin(backend="inductor", mode="default")) #reduce-overhead
-        
+        kwargs_handlers.append(TorchDynamoPlugin(backend="inductor", mode="default"))  # reduce-overhead
+
     accelerator = Accelerator(
         gradient_accumulation_steps=training_args.gradient_accumulation_steps,
         mixed_precision=mixed_precision,
@@ -822,26 +854,28 @@ def main():
         project_dir=training_args.output_dir,
         kwargs_handlers=kwargs_handlers,
     )
-    
-    accelerator.init_trackers(project_name=data_args.wandb_project, config={
-        "learning_rate": training_args.learning_rate,
-        "model_name_or_path": model_args.model_name_or_path,
-        "num_train_epochs": training_args.num_train_epochs,
-        "gradient_accumulation_steps": training_args.gradient_accumulation_steps,
-        "per_device_train_batch_size": training_args.per_device_train_batch_size,
-        "global_batch_size": training_args.per_device_train_batch_size * accelerator.num_processes,
-        "mixed_precision": mixed_precision,
-        "lr_scheduler_type":training_args.lr_scheduler_type,
-        "warmup_steps":training_args.warmup_steps,
-        "freeze_text_encoder":model_args.freeze_text_encoder,
-        "max_duration_in_seconds":data_args.max_duration_in_seconds,
-        "weight_decay": training_args.weight_decay,
-        "adam_beta1": training_args.adam_beta1,
-        "adam_beta2": training_args.adam_beta2,
-        "temperature": model_args.temperature,
-        })
-    
-    
+
+    accelerator.init_trackers(
+        project_name=data_args.wandb_project,
+        config={
+            "learning_rate": training_args.learning_rate,
+            "model_name_or_path": model_args.model_name_or_path,
+            "num_train_epochs": training_args.num_train_epochs,
+            "gradient_accumulation_steps": training_args.gradient_accumulation_steps,
+            "per_device_train_batch_size": training_args.per_device_train_batch_size,
+            "global_batch_size": training_args.per_device_train_batch_size * accelerator.num_processes,
+            "mixed_precision": mixed_precision,
+            "lr_scheduler_type": training_args.lr_scheduler_type,
+            "warmup_steps": training_args.warmup_steps,
+            "freeze_text_encoder": model_args.freeze_text_encoder,
+            "max_duration_in_seconds": data_args.max_duration_in_seconds,
+            "weight_decay": training_args.weight_decay,
+            "adam_beta1": training_args.adam_beta1,
+            "adam_beta2": training_args.adam_beta2,
+            "temperature": model_args.temperature,
+        },
+    )
+
     # Detecting last checkpoint and eventually continue from last checkpoint
     last_checkpoint = None
     if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
@@ -856,7 +890,6 @@ def main():
                 f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
                 "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
             )
-    
 
     # Setup logging
     logging.basicConfig(
@@ -880,17 +913,16 @@ def main():
         datasets.utils.logging.set_verbosity_error()
         transformers.utils.logging.set_verbosity_error()
 
-
     logger.info("Training/evaluation parameters %s", training_args)
 
     # Set seed before initializing model.
     set_seed(training_args.seed)
     num_workers = data_args.preprocessing_num_workers
-    
+
     # 1. First, lett's instantiate the feature extractor, tokenizers and model
     # Note for distributed training, the .from_pretrained methods guarantee that only
     # one local process can concurrently download model & vocab.
-    
+
     # load feature extractor
     feature_extractor = AutoFeatureExtractor.from_pretrained(
         model_args.feature_extractor_name or model_args.model_name_or_path,
@@ -899,7 +931,7 @@ def main():
         trust_remote_code=data_args.trust_remote_code,
     )
     sampling_rate = feature_extractor.sampling_rate
-    
+
     # load prompt tokenizer
     prompt_tokenizer = AutoTokenizer.from_pretrained(
         model_args.prompt_tokenizer_name or model_args.description_tokenizer_name or model_args.model_name_or_path,
@@ -907,9 +939,9 @@ def main():
         token=data_args.token,
         trust_remote_code=data_args.trust_remote_code,
         use_fast=model_args.use_fast_tokenizer,
-        padding_side="left", # prompt has to be padded on the left bc it's preprend to codebooks hidden states
+        padding_side="left",  # prompt has to be padded on the left bc it's preprend to codebooks hidden states
     )
-        
+
     # load description tokenizer
     description_tokenizer = AutoTokenizer.from_pretrained(
         model_args.description_tokenizer_name or model_args.model_name_or_path,
@@ -918,31 +950,33 @@ def main():
         trust_remote_code=data_args.trust_remote_code,
         use_fast=model_args.use_fast_tokenizer,
     )
-    
+
     if model_args.use_fast_tokenizer:
-        logger.warning("Disabling fast tokenizer warning: https://github.com/huggingface/transformers/blob/main/src/transformers/tokenization_utils_base.py#L3231-L3235")
+        logger.warning(
+            "Disabling fast tokenizer warning: https://github.com/huggingface/transformers/blob/main/src/transformers/tokenization_utils_base.py#L3231-L3235"
+        )
         prompt_tokenizer.deprecation_warnings["Asking-to-pad-a-fast-tokenizer"] = True
         description_tokenizer.deprecation_warnings["Asking-to-pad-a-fast-tokenizer"] = True
 
     # 2. Now, let's load the dataset
-    
+
     if data_args.save_to_disk is not None:
         os.makedirs(data_args.save_to_disk, exist_ok=True)
-    
+
     # assume that the dataset has been saved to `save_to_disk` if the latter is not empty
     dataset_was_precomputed = len(os.listdir(data_args.save_to_disk)) > 0
     if dataset_was_precomputed:
         vectorized_datasets = datasets.load_from_disk(data_args.save_to_disk)
-    else:    
+    else:
         raw_datasets = DatasetDict()
 
         columns_to_keep = {
             "target_audio_column_name": data_args.target_audio_column_name,
-            "prompt_column_name": data_args.prompt_column_name
+            "prompt_column_name": data_args.prompt_column_name,
         }
         if data_args.description_column_name is not None:
             columns_to_keep["description_column_name"] = data_args.description_column_name
-            
+
         if training_args.do_train:
             raw_datasets["train"] = load_multiple_datasets(
                 accelerator,
@@ -961,14 +995,14 @@ def main():
                 sampling_rate=sampling_rate,
                 # streaming=data_args.streaming, TODO(SG): optionally enable streaming mode
             )
-            
+
             for key in columns_to_keep:
                 if columns_to_keep[key] not in raw_datasets["train"].column_names:
                     raise ValueError(
                         f"--{key} '{columns_to_keep[key]}' not found in dataset '{data_args.train_dataset_name}'."
                         f" Make sure to set `--{key}` to the correct audio column - one of"
                         f" {', '.join(raw_datasets['train'].column_names)}."
-                    )        
+                    )
 
             if data_args.max_train_samples is not None:
                 raw_datasets["train"] = raw_datasets["train"].select(range(data_args.max_train_samples))
@@ -977,7 +1011,9 @@ def main():
             raw_datasets["eval"] = load_multiple_datasets(
                 accelerator,
                 data_args.eval_dataset_name if data_args.eval_dataset_name else data_args.train_dataset_name,
-                data_args.eval_dataset_config_name if data_args.eval_dataset_config_name else data_args.train_dataset_config_name,
+                data_args.eval_dataset_config_name
+                if data_args.eval_dataset_config_name
+                else data_args.train_dataset_config_name,
                 metadata_dataset_names=data_args.eval_metadata_dataset_name,
                 splits=data_args.eval_split_name,
                 cache_dir=model_args.cache_dir,
@@ -991,8 +1027,9 @@ def main():
             )
 
             if data_args.max_eval_samples is not None:
-                raw_datasets["eval"] = raw_datasets["eval"].shuffle(seed=training_args.seed).select(range(data_args.max_eval_samples))
-
+                raw_datasets["eval"] = (
+                    raw_datasets["eval"].shuffle(seed=training_args.seed).select(range(data_args.max_eval_samples))
+                )
 
     # 3. Next, let's load the config.
     # TODO(YL): add the option to create the config from scratch
@@ -1002,14 +1039,20 @@ def main():
         token=data_args.token,
         trust_remote_code=data_args.trust_remote_code,
     )
-    
+
     # update pad token id and decoder_start_token_id
     # TODO(YL): verify if this makes sense, maybe should do it for model.decoder
-    config.update({
-        "pad_token_id": model_args.pad_token_id if model_args.pad_token_id is not None else model.config.pad_token_id,
-        "decoder_start_token_id": model_args.decoder_start_token_id if model_args.decoder_start_token_id is not None else model.config.decoder_start_token_id,
-    })
-    
+    config.update(
+        {
+            "pad_token_id": model_args.pad_token_id
+            if model_args.pad_token_id is not None
+            else model.config.pad_token_id,
+            "decoder_start_token_id": model_args.decoder_start_token_id
+            if model_args.decoder_start_token_id is not None
+            else model.config.decoder_start_token_id,
+        }
+    )
+
     # create model + TODO(YL): not from_pretrained probably
     model = ParlerTTSForConditionalGeneration.from_pretrained(
         model_args.model_name_or_path,
@@ -1018,16 +1061,16 @@ def main():
         token=data_args.token,
         trust_remote_code=data_args.trust_remote_code,
     )
-    
+
     # enable gradient checkpointing if necessary
     if training_args.gradient_checkpointing:
         model.gradient_checkpointing_enable()
-    
+
     # 4. Now we preprocess the datasets including loading the audio, resampling and normalization
     # Thankfully, `datasets` takes care of automatically loading and resampling the audio,
     # so that we just need to set the correct target sampling rate and normalize the input
     # via the `feature_extractor`
-    
+
     # derive max & min input length for sample rate & max duration
     sampling_rate = feature_extractor.sampling_rate
     max_target_length = data_args.max_duration_in_seconds * sampling_rate
@@ -1042,18 +1085,18 @@ def main():
     max_length = model.generation_config.max_length
     num_codebooks = model.decoder.config.num_codebooks
     bandwidth = model_args.bandwidth
-    
+
     # Freeze Encoders
     model.freeze_encoders(model_args.freeze_text_encoder)
-    
+
     # TODO: remove when releasing
     # Test all gather - used for warmout and avoiding timeout
     test_tensor = torch.tensor([accelerator.process_index], device=accelerator.device)
     gathered_tensor = accelerator.gather(test_tensor)
     print("gathered_tensor", gathered_tensor)
     accelerator.wait_for_everyone()
-    
-    if not dataset_was_precomputed:        
+
+    if not dataset_was_precomputed:
         # Filter on text length
         if description_column_name is not None and data_args.max_text_length is not None:
             with accelerator.main_process_first():
@@ -1068,13 +1111,13 @@ def main():
         # We need to tokenize the texts.
         def pass_through_processors(description, prompt):
             batch = {}
-            
+
             batch["input_ids"] = description_tokenizer(description.strip())["input_ids"]
             # TODO: add possibility to train without description column
             batch["prompt_input_ids"] = prompt_tokenizer(prompt.strip())["input_ids"]
 
             return batch
-        
+
         with accelerator.main_process_first():
             # this is a trick to avoid to rewrite the entire audio column which takes ages
             vectorized_datasets = raw_datasets.map(
@@ -1087,13 +1130,13 @@ def main():
 
         # We use Accelerate to perform distributed inference
         # T5 doesn't support fp16
-        autocast_kwargs = AutocastKwargs(enabled= (mixed_precision != "fp16"))
+        autocast_kwargs = AutocastKwargs(enabled=(mixed_precision != "fp16"))
 
         # Now we encode the audio labels with encodec.
         ####### B. Encode audio
 
         logger.info("*** Encode target audio with encodec ***")
-        
+
         # no need to prepare audio_decoder because used for inference without mixed precision
         # see: https://huggingface.co/docs/accelerate/main/en/package_reference/accelerator#accelerate.Accelerator.prepare
         if training_args.torch_compile:
@@ -1101,7 +1144,13 @@ def main():
         else:
             audio_decoder = model.audio_encoder
 
-        encoder_data_collator = DataCollatorEncodecWithPadding(feature_extractor, audio_column_name=target_audio_column_name, feature_extractor_input_name=feature_extractor_input_name, max_length=max_target_length,padding=padding)
+        encoder_data_collator = DataCollatorEncodecWithPadding(
+            feature_extractor,
+            audio_column_name=target_audio_column_name,
+            feature_extractor_input_name=feature_extractor_input_name,
+            max_length=max_target_length,
+            padding=padding,
+        )
 
         def apply_audio_decoder(batch):
             len_audio = batch.pop("len_audio")
@@ -1111,8 +1160,8 @@ def main():
             output = {}
             output["len_audio"] = len_audio
             # (1, bsz, codebooks, seq_len) -> (bsz, seq_len, codebooks)
-            output["labels"] = labels.squeeze(0).transpose(1,2)
-            output["ratio"] = torch.ones_like(len_audio) * labels.shape[-1] / len_audio.max() 
+            output["labels"] = labels.squeeze(0).transpose(1, 2)
+            output["ratio"] = torch.ones_like(len_audio) * labels.shape[-1] / len_audio.max()
             return output
 
         for split in vectorized_datasets:
@@ -1123,82 +1172,83 @@ def main():
                 num_workers=training_args.dataloader_num_workers,
                 pin_memory=True,
             )
-            data_loader = accelerator.prepare(data_loader)        
-            
+            data_loader = accelerator.prepare(data_loader)
+
             all_generated_labels = []
             all_lens = []
             for batch in tqdm(data_loader, disable=not accelerator.is_local_main_process):
                 generate_labels = apply_audio_decoder(batch)
                 generate_labels = accelerator.pad_across_processes(generate_labels, dim=1, pad_index=0)
                 generate_labels = accelerator.gather_for_metrics(generate_labels)
-                
+
                 if accelerator.is_main_process:
-                    lab = generate_labels["labels"].cpu().transpose(1,2).to(torch.int16)
+                    lab = generate_labels["labels"].cpu().transpose(1, 2).to(torch.int16)
                     rat = generate_labels["ratio"].cpu().squeeze()
                     lens = generate_labels["len_audio"].cpu().squeeze()
-                    lab = [l[:, :int(ratio*length)] for (l, ratio, length) in zip(lab, rat, lens)]
-                    
+                    lab = [l[:, : int(ratio * length)] for (l, ratio, length) in zip(lab, rat, lens)]
+
                     all_generated_labels.extend(lab)
                     all_lens.extend(lens)
-                
+
             # (1, codebooks, seq_len) where seq_len=1
             bos_labels = torch.ones((1, num_codebooks, 1)) * audio_encoder_bos_token_id
-            
+
             if accelerator.is_main_process:
                 tmp_labels = Dataset.from_dict({"labels": all_generated_labels, "target_length": all_lens})
-                tmp_labels.save_to_disk(os.path.join(data_args.temporary_save_to_disk, split), num_proc=1 if split == "eval" else data_args.preprocessing_num_workers)
+                tmp_labels.save_to_disk(
+                    os.path.join(data_args.temporary_save_to_disk, split),
+                    num_proc=1 if split == "eval" else data_args.preprocessing_num_workers,
+                )
             accelerator.wait_for_everyone()
             del all_generated_labels
-            
+
             tmp_labels = datasets.load_from_disk(os.path.join(data_args.temporary_save_to_disk, split))
             with accelerator.main_process_first():
                 vectorized_datasets[split] = concatenate_datasets([vectorized_datasets[split], tmp_labels], axis=1)
-            
-            
+
             def postprocess_dataset(labels):
                 # (1, codebooks, seq_len)
-                labels = torch.tensor(labels).unsqueeze(0)         
+                labels = torch.tensor(labels).unsqueeze(0)
                 # add bos
                 labels = torch.cat([bos_labels, labels], dim=-1)
-                
-                labels, delay_pattern_mask = build_delay_pattern_mask(labels, 
-                                                        bos_token_id=audio_encoder_bos_token_id,
-                                                        pad_token_id=audio_encoder_eos_token_id,
-                                                        max_length=labels.shape[-1] + num_codebooks,
-                                                        num_codebooks=num_codebooks)
-                
+
+                labels, delay_pattern_mask = build_delay_pattern_mask(
+                    labels,
+                    bos_token_id=audio_encoder_bos_token_id,
+                    pad_token_id=audio_encoder_eos_token_id,
+                    max_length=labels.shape[-1] + num_codebooks,
+                    num_codebooks=num_codebooks,
+                )
+
                 # the first ids of the delay pattern mask are precisely labels, we use the rest of the labels mask
                 # to take care of EOS
                 # we want labels to look like this:
                 #  - [B, a, b, E, E, E, E]
                 #  - [B, B, c, d, E, E, E]
                 #  - [B, B, B, e, f, E, E]
-                #  - [B, B, B, B, g, h, E] 
-                labels = torch.where(delay_pattern_mask==-1, audio_encoder_eos_token_id, delay_pattern_mask)
-                            
+                #  - [B, B, B, B, g, h, E]
+                labels = torch.where(delay_pattern_mask == -1, audio_encoder_eos_token_id, delay_pattern_mask)
+
                 # the first timestamp is associated to a row full of BOS, let's get rid of it
                 # we also remove the last timestampts (full of PAD)
                 output = {"labels": labels[:, 1:]}
                 return output
-            
 
             # TODO(YL): done multiple times, how to deal with it.
             with accelerator.main_process_first():
                 vectorized_datasets[split] = vectorized_datasets[split].map(
                     postprocess_dataset,
-                    num_proc=data_args.preprocessing_num_workers, # this one is resource consuming if many processor.
+                    num_proc=data_args.preprocessing_num_workers,  # this one is resource consuming if many processor.
                     input_columns=["labels"],
                     desc="Postprocessing labeling",
                 )
 
-                
         accelerator.free_memory()
         del generate_labels, all_lens
-        
 
         with accelerator.main_process_first():
             # NOTE: filtering is done at the end because in the `datasets` library, caching audio files is done after most operations
-            # caching audio files is time and disk-space consuming, so we want to avoid it at all costs, especially for large (>1Kh) audio datasets. 
+            # caching audio files is time and disk-space consuming, so we want to avoid it at all costs, especially for large (>1Kh) audio datasets.
             # That's also why we avoid to concat the processed datasets (vectorized_datasets) with the audio column present in raw_datasets.
 
             def is_audio_in_length_range(length):
@@ -1210,7 +1260,7 @@ def main():
                 num_proc=num_workers,
                 input_columns=["target_length"],
             )
-            
+
             if description_column_name is not None and data_args.max_description_token_length is not None:
                 with accelerator.main_process_first():
                     # filter description that is shorter than max_text_length
@@ -1228,22 +1278,24 @@ def main():
                         num_proc=num_workers,
                         input_columns=["prompt_input_ids"],
                     )
-        
+
     if data_args.save_to_disk is not None and not dataset_was_precomputed:
         if accelerator.is_main_process:
-            vectorized_datasets.save_to_disk(data_args.save_to_disk, num_proc=min(data_args.preprocessing_num_workers, len(vectorized_datasets["eval"])-1))
+            vectorized_datasets.save_to_disk(
+                data_args.save_to_disk,
+                num_proc=min(data_args.preprocessing_num_workers, len(vectorized_datasets["eval"]) - 1),
+            )
         logger.info(f"Dataset saved at {data_args.save_to_disk}")
-        
-    
+
     audio_max_length = None
     if training_args.torch_compile:
         audio_max_length = max(vectorized_datasets["train"]["target_length"])
-        with accelerator.main_process_first(): 
+        with accelerator.main_process_first():
             max_sample = vectorized_datasets["train"].filter(
-                        lambda x: x == audio_max_length,
-                        num_proc=num_workers,
-                        input_columns=["target_length"],
-                    )
+                lambda x: x == audio_max_length,
+                num_proc=num_workers,
+                input_columns=["target_length"],
+            )
         audio_max_length = torch.tensor(max_sample[0]["labels"]).shape[1]
 
     # for large datasets it is advised to run the preprocessing on a
@@ -1252,44 +1304,50 @@ def main():
     # In a second step ``args.preprocessing_only`` can then be set to `False` to load the
     # cached dataset
     if data_args.preprocessing_only and data_args.save_to_disk is None:
-        raise ValueError("`preprocessing_only=True` but `save_to_disk` is not set. The latter should indicates where to save the dataset locally.")
+        raise ValueError(
+            "`preprocessing_only=True` but `save_to_disk` is not set. The latter should indicates where to save the dataset locally."
+        )
     elif data_args.preprocessing_only:
         logger.info(f"Data preprocessing finished. Files save at {data_args.save_to_disk}")
         return
-    
-    
+
     # 6. Next, we can prepare the training.
-    
+
     # Let's use word CLAP similary and WER metrics as our evaluation metrics,
 
     # Define evaluation metrics during training, *i.e.* CLAP similarity TODO: allow using another CLAP
     clap = AutoModel.from_pretrained("laion/larger_clap_music_and_speech")
     clap_processor = AutoProcessor.from_pretrained("laion/larger_clap_music_and_speech")
     metric = evaluate.load("wer")
-    
-    
+
     def clap_similarity(texts, audios, device):
         clap_inputs = clap_processor(text=texts, audios=audios, padding=True, return_tensors="pt").to(device)
         clap.to(device)
         with torch.no_grad():
-            text_features = clap.get_text_features(clap_inputs["input_ids"], attention_mask=clap_inputs.get("attention_mask", None))
+            text_features = clap.get_text_features(
+                clap_inputs["input_ids"], attention_mask=clap_inputs.get("attention_mask", None)
+            )
             audio_features = clap.get_audio_features(clap_inputs["input_features"])
-            
+
             cosine_sim = torch.nn.functional.cosine_similarity(audio_features, text_features, dim=1, eps=1e-8)
-        
+
         clap.to("cpu")
         clap_inputs.to("cpu")
         return cosine_sim.mean().to("cpu")
-    
+
     def wer(prompts, audios, device):
         asr_pipeline = pipeline(model="distil-whisper/distil-large-v2", device=device)
-        transcriptions = asr_pipeline([{'raw': audio, 'sampling_rate': sampling_rate} for audio in audios], batch_size=int(training_args.per_device_eval_batch_size))
-        
-        word_error = 100 * metric.compute(predictions=[t["text"].lower() for t in transcriptions], references=[t.lower() for t in prompts])
-        
+        transcriptions = asr_pipeline(
+            [{"raw": audio, "sampling_rate": sampling_rate} for audio in audios],
+            batch_size=int(training_args.per_device_eval_batch_size),
+        )
+
+        word_error = 100 * metric.compute(
+            predictions=[t["text"].lower() for t in transcriptions], references=[t.lower() for t in prompts]
+        )
+
         return word_error, [t["text"] for t in transcriptions]
-        
-    
+
     eval_methods = {"clap": clap_similarity, "wer": wer}
 
     def compute_metrics(audios, descriptions, prompts, device="cpu"):
@@ -1297,22 +1355,19 @@ def main():
         texts = description_tokenizer.batch_decode(input_ids, skip_special_tokens=True)
         prompts = prompt_tokenizer.batch_decode(prompts, skip_special_tokens=True)
         audios = [a.cpu().numpy() for a in audios]
-        results = {
-            "clap": eval_methods["clap"](texts, audios, device)
-        }
+        results = {"clap": eval_methods["clap"](texts, audios, device)}
         word_error, transcriptions = eval_methods["wer"](prompts, audios, device)
         results["wer"] = word_error
 
         return results, texts, prompts, audios, transcriptions
-    
+
     # Define Training Schedule
     # Store some constants
     per_device_train_batch_size = int(training_args.per_device_train_batch_size)
     train_batch_size = per_device_train_batch_size * accelerator.num_processes
     gradient_accumulation_steps = int(training_args.gradient_accumulation_steps)
     per_device_eval_batch_size = int(training_args.per_device_eval_batch_size)
-    
-    
+
     if training_args.max_steps < 0:
         num_epochs = int(training_args.num_train_epochs)
         steps_per_epoch = len(vectorized_datasets["train"]) // (train_batch_size * gradient_accumulation_steps)
@@ -1325,16 +1380,14 @@ def main():
         steps_per_epoch = total_train_steps
 
     if training_args.eval_steps is None:
-        logger.info(
-            f"eval_steps is not set, evaluating at the end of each epoch"
-        )
+        logger.info(f"eval_steps is not set, evaluating at the end of each epoch")
         eval_steps = steps_per_epoch
     else:
         eval_steps = training_args.eval_steps
-        
+
     # T5 doesn't support fp16
-    autocast_kwargs = AutocastKwargs(enabled= (mixed_precision != "fp16"))
-        
+    autocast_kwargs = AutocastKwargs(enabled=(mixed_precision != "fp16"))
+
     # Define optimizer, LR scheduler, collator
     optimizer = torch.optim.AdamW(
         params=model.parameters(),
@@ -1354,14 +1407,20 @@ def main():
 
     # Instantiate custom data collator
     data_collator = DataCollatorParlerTTSWithPadding(
-        audio_feature_extractor=feature_extractor, feature_extractor_input_name=feature_extractor_input_name, prompt_tokenizer=prompt_tokenizer, description_tokenizer=description_tokenizer, pad_to_multiple_of=data_args.pad_to_multiple_of,
-        padding=padding, prompt_max_length=data_args.max_prompt_token_length, description_max_length=data_args.max_description_token_length, audio_max_length = audio_max_length
+        audio_feature_extractor=feature_extractor,
+        feature_extractor_input_name=feature_extractor_input_name,
+        prompt_tokenizer=prompt_tokenizer,
+        description_tokenizer=description_tokenizer,
+        pad_to_multiple_of=data_args.pad_to_multiple_of,
+        padding=padding,
+        prompt_max_length=data_args.max_prompt_token_length,
+        description_max_length=data_args.max_description_token_length,
+        audio_max_length=audio_max_length,
     )
-    
-    
+
     # Prepare everything with accelerate
     model, optimizer, lr_scheduler = accelerator.prepare(model, optimizer, lr_scheduler)
-    
+
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {total_train_steps * train_batch_size * gradient_accumulation_steps}")
     logger.info("  Instantaneous batch size per device =" f" {per_device_train_batch_size}")
@@ -1386,8 +1445,7 @@ def main():
         checkpoint = training_args.resume_from_checkpoint
     elif last_checkpoint is not None:
         checkpoint = last_checkpoint
-    
-            
+
     if accelerator.is_main_process:
         if training_args.push_to_hub:
             # Retrieve of infer repo_name
@@ -1405,23 +1463,27 @@ def main():
         elif training_args.output_dir is not None:
             os.makedirs(training_args.output_dir, exist_ok=True)
     accelerator.wait_for_everyone()
-    
+
     # Now save everything to be able to create a single processor later
     # make sure all processes wait until data is saved
     with accelerator.main_process_first():
         # only the main process saves them
         if accelerator.is_main_process:
             # save feature extractor, tokenizer and config
-            if model_args.prompt_tokenizer_name is None and model_args.description_tokenizer_name or (model_args.prompt_tokenizer_name==model_args.description_tokenizer_name):
+            if (
+                model_args.prompt_tokenizer_name is None
+                and model_args.description_tokenizer_name
+                or (model_args.prompt_tokenizer_name == model_args.description_tokenizer_name)
+            ):
                 prompt_tokenizer.save_pretrained(training_args.output_dir)
             else:
-                logger.warning("Prompt tokenizer ('{model_args.prompt_tokenizer_name}') and description tokenizer ('{model_args.description_tokenizer_name}') are not the same. Saving only the prompt tokenizer.")
+                logger.warning(
+                    "Prompt tokenizer ('{model_args.prompt_tokenizer_name}') and description tokenizer ('{model_args.description_tokenizer_name}') are not the same. Saving only the prompt tokenizer."
+                )
                 prompt_tokenizer.save_pretrained(training_args.output_dir)
-            
+
             feature_extractor.save_pretrained(training_args.output_dir)
             config.save_pretrained(training_args.output_dir)
-            
-    
 
     if checkpoint is not None:
         accelerator.load_state(checkpoint)
@@ -1439,7 +1501,7 @@ def main():
 
         for epoch in range(0, epochs_trained):
             vectorized_datasets["train"] = vectorized_datasets["train"].shuffle(training_args.seed)
-            
+
         if training_args.max_steps < 0:
             # we know exactly the number of steps per epoch, so can skip through the required number of batches
             resume_step = (cur_step - epochs_trained * steps_per_epoch) * gradient_accumulation_steps
@@ -1451,13 +1513,13 @@ def main():
             vectorized_datasets["train"] = vectorized_datasets["train"].shuffle(training_args.seed)
     else:
         resume_step = None
-        
+
     gen_kwargs = {
         "do_sample": model_args.do_sample,
         "temperature": model_args.temperature,
         "max_length": model_args.max_length,
     }
-    
+
     # Define gradient update step fn
     def train_step(
         batch,
@@ -1465,26 +1527,34 @@ def main():
         autocast_kwargs,
     ):
         model.train()
-        
+
         if mixed_precision == "fp16":
             # fp16 doesn't work with T5-like models
             with accelerator.autocast(autocast_handler=autocast_kwargs):
                 if training_args.parallel_mode.value != "distributed":
-                    encoder_outputs = model.text_encoder(input_ids= batch.get("input_ids"), attention_mask=batch.get("attention_mask", None))
+                    encoder_outputs = model.text_encoder(
+                        input_ids=batch.get("input_ids"), attention_mask=batch.get("attention_mask", None)
+                    )
                 else:
-                    encoder_outputs = model.module.text_encoder(input_ids= batch.get("input_ids"), attention_mask=batch.get("attention_mask", None))
+                    encoder_outputs = model.module.text_encoder(
+                        input_ids=batch.get("input_ids"), attention_mask=batch.get("attention_mask", None)
+                    )
                 batch["encoder_outputs"] = encoder_outputs
-       
+
         outputs = model(**batch)
         # CE (data) loss
         ce_loss = outputs.loss
-        # TODO: add CE per codebook 
+        # TODO: add CE per codebook
 
         metrics = {"loss": ce_loss}
         return ce_loss, metrics
-    
+
     # Define eval fn
-    def eval_step(batch, accelerator, autocast_kwargs,):
+    def eval_step(
+        batch,
+        accelerator,
+        autocast_kwargs,
+    ):
         eval_model = model if not training_args.torch_compile else model._orig_mod
         eval_model.eval()
 
@@ -1493,9 +1563,13 @@ def main():
             with accelerator.autocast(autocast_handler=autocast_kwargs):
                 with torch.no_grad():
                     if training_args.parallel_mode.value != "distributed" or training_args.torch_compile:
-                        encoder_outputs = eval_model.text_encoder(input_ids= batch.get("input_ids"), attention_mask=batch.get("attention_mask", None))
+                        encoder_outputs = eval_model.text_encoder(
+                            input_ids=batch.get("input_ids"), attention_mask=batch.get("attention_mask", None)
+                        )
                     else:
-                        encoder_outputs = eval_model.module.text_encoder(input_ids= batch.get("input_ids"), attention_mask=batch.get("attention_mask", None))
+                        encoder_outputs = eval_model.module.text_encoder(
+                            input_ids=batch.get("input_ids"), attention_mask=batch.get("attention_mask", None)
+                        )
                 batch["encoder_outputs"] = encoder_outputs
 
         with torch.no_grad():
@@ -1507,7 +1581,7 @@ def main():
 
     def generate_step(batch):
         batch.pop("decoder_attention_mask", None)
-        eval_model = accelerator.unwrap_model(model, keep_fp32_wrapper = mixed_precision != "fp16").eval() 
+        eval_model = accelerator.unwrap_model(model, keep_fp32_wrapper=mixed_precision != "fp16").eval()
         if training_args.torch_compile:
             eval_model = model._orig_mod
 
@@ -1518,7 +1592,7 @@ def main():
     for epoch in range(epochs_trained, num_epochs):
         vectorized_datasets["train"] = vectorized_datasets["train"].shuffle(training_args.seed)
         # TODO(YL): add args
-        sampler = LengthGroupedSampler(train_batch_size, lengths = vectorized_datasets["train"]["target_length"])
+        sampler = LengthGroupedSampler(train_batch_size, lengths=vectorized_datasets["train"]["target_length"])
         train_dataloader = DataLoader(
             vectorized_datasets["train"],
             collate_fn=data_collator,
@@ -1545,7 +1619,6 @@ def main():
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
-
 
             # Check if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
@@ -1597,7 +1670,7 @@ def main():
                     eval_descriptions = []
                     eval_prompts = []
                     eval_start = time.time()
-                    
+
                     # release training input batch
                     batch = release_memory(batch)
 
@@ -1634,17 +1707,21 @@ def main():
                         validation_dataloader = accelerator.prepare(validation_dataloader)
                         # generation
                         for batch in tqdm(
-                                validation_dataloader,
-                                desc=f"Evaluating - Generation ...",
-                                position=2,
-                                disable=not accelerator.is_local_main_process,
-                            ):
+                            validation_dataloader,
+                            desc=f"Evaluating - Generation ...",
+                            position=2,
+                            disable=not accelerator.is_local_main_process,
+                        ):
                             generated_audios = generate_step(batch)
                             # Gather all predictions and targets
                             # TODO: also add prompt ids
                             # TODO: better gather
-                            generated_audios, input_ids, prompts = accelerator.pad_across_processes((generated_audios, batch["input_ids"], batch["prompt_input_ids"]), dim=1, pad_index=0) 
-                            generated_audios, input_ids, prompts = accelerator.gather_for_metrics((generated_audios, input_ids, prompts))
+                            generated_audios, input_ids, prompts = accelerator.pad_across_processes(
+                                (generated_audios, batch["input_ids"], batch["prompt_input_ids"]), dim=1, pad_index=0
+                            )
+                            generated_audios, input_ids, prompts = accelerator.gather_for_metrics(
+                                (generated_audios, input_ids, prompts)
+                            )
                             eval_preds.extend(generated_audios.to("cpu"))
                             eval_descriptions.extend(input_ids.to("cpu"))
                             eval_prompts.extend(prompts.to("cpu"))
@@ -1652,7 +1729,8 @@ def main():
                     eval_time = time.time() - eval_start
                     # normalize eval metrics
                     eval_metrics = {
-                        key: torch.mean(torch.cat([d[key].unsqueeze(0) for d in eval_metrics])) for key in eval_metrics[0]
+                        key: torch.mean(torch.cat([d[key].unsqueeze(0) for d in eval_metrics]))
+                        for key in eval_metrics[0]
                     }
 
                     # compute metrics
@@ -1689,14 +1767,13 @@ def main():
                         epoch=epoch,
                         prefix="eval",
                     )
-                    
+
                     # release eval batch and relax metrics
                     eval_metrics = []
                     eval_preds = []
                     eval_descriptions = []
                     eval_prompts = []
                     batch = release_memory(batch)
-
 
                     # flush the train metrics
                     train_start = time.time()
@@ -1710,7 +1787,6 @@ def main():
             break
 
     accelerator.end_training()
-    
 
 
 if __name__ == "__main__":

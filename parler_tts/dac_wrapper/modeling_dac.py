@@ -7,22 +7,24 @@ from .configuration_dac import DACConfig
 from dac.model import DAC
 
 
+# model doesn't support batching yet
 
-# model doesn't support batching yet 
 
 class DACModel(PreTrainedModel):
     config_class = DACConfig
 
     def __init__(self, config):
         super().__init__(config)
-        
+
         self.model = DAC(
-            n_codebooks = config.num_codebooks,
-            latent_dim = config.latent_dim,
-            codebook_size = config.codebook_size,
+            n_codebooks=config.num_codebooks,
+            latent_dim=config.latent_dim,
+            codebook_size=config.codebook_size,
         )
-        
-    def encode(self, input_values, padding_mask=None, bandwidth=None, return_dict=None, n_quantizers=None, sample_rate=None):
+
+    def encode(
+        self, input_values, padding_mask=None, bandwidth=None, return_dict=None, n_quantizers=None, sample_rate=None
+    ):
         """
         Encodes the input audio waveform into discrete codes.
 
@@ -44,7 +46,7 @@ class DACModel(PreTrainedModel):
             factors for each chunk when `normalize` is True. Each frames is a tuple `(codebook, scale)`, with
             `codebook` of shape `[batch_size, num_codebooks, frames]`.
             Scale is not used here.
-    
+
         """
         _, channels, input_length = input_values.shape
 
@@ -52,12 +54,12 @@ class DACModel(PreTrainedModel):
             raise ValueError(f"Number of audio channels must be 1 or 2, but got {channels}")
 
         audio_data = self.model.preprocess(input_values, sample_rate)
-        
+
         return_dict = return_dict if return_dict is not None else self.config.return_dict
 
         # TODO: for now, no chunk length
 
-        chunk_length = None # self.config.chunk_length
+        chunk_length = None  # self.config.chunk_length
         if chunk_length is None:
             chunk_length = input_length
             stride = input_length
@@ -79,9 +81,9 @@ class DACModel(PreTrainedModel):
         for offset in range(0, input_length - step, stride):
             mask = padding_mask[..., offset : offset + chunk_length].bool()
             frame = audio_data[:, :, offset : offset + chunk_length]
-            
+
             scale = None
-            
+
             _, encoded_frame, _, _, _ = self.model.encode(frame, n_quantizers=n_quantizers)
             encoded_frames.append(encoded_frame)
             scales.append(scale)
@@ -92,15 +94,14 @@ class DACModel(PreTrainedModel):
             return (encoded_frames, scales)
 
         return EncodecEncoderOutput(encoded_frames, scales)
-    
-    
+
     def decode(
-            self,
-            audio_codes,
-            audio_scales,
-            padding_mask = None,
-            return_dict = None,
-        ):
+        self,
+        audio_codes,
+        audio_scales,
+        padding_mask=None,
+        return_dict=None,
+    ):
         """
         Decodes the given frames into an output audio waveform.
 
@@ -125,12 +126,12 @@ class DACModel(PreTrainedModel):
 
         if len(audio_codes) != 1:
             raise ValueError(f"Expected one frame, got {len(audio_codes)}")
-        
+
         audio_values = self.model.quantizer.from_codes(audio_codes.squeeze(0))[0]
         audio_values = self.model.decode(audio_values)
         if not return_dict:
             return (audio_values,)
         return EncodecDecoderOutput(audio_values)
-    
+
     def forward(self, tensor):
         raise ValueError(f"`DACModel.forward` not implemented yet")
