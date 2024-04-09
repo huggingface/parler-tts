@@ -1,5 +1,12 @@
 # Training Parler-TTS
 
+> [!IMPORTANT]
+> **TL;DR:** After having followed the [installation steps](#requirements), you can reproduce the Parler-TTS v0.1 training recipe with the following command line:
+
+```sh
+accelerate launch ./training/run_parler_tts_training.py ./helpers/training_configs/starting_point_0.01.json
+```
+
 This sub-folder contains all the information to train or fine-tune your own Parler-TTS model. It consists of:
 - [1. An introduction to the Parler-TTS architecture](#a-architecture)
 - [2. First steps to get started](#b-getting-started)
@@ -72,7 +79,7 @@ You can also train you own model from scratch. You can find [here](/helpers/mode
 python helpers/model_init_scripts/init_dummy_model.py ./parler-tts-untrained-dummy --text_model "google-t5/t5-small" --audio_model "parler-tts/dac_44khZ_8kbps"
 ```
 
-In the rest of this guide, we'll use a 300-M parameters that we'll initialize with:
+In the rest of this guide, and to reproduce the Parler-TTS v0.1 training recipe, we'll use a 300-M parameters that we'll initialize with:
 
 ```sh
 python helpers/model_init_scripts/init_model_300M.py ./parler-tts-untrained-300M --text_model "google/flan-t5-base" --audio_model "parler-tts/dac_44khZ_8kbps"
@@ -88,7 +95,11 @@ To train your own Parler-TTS, you need datasets with 3 main features:
 
 Note that we made the choice to use description of the main speech characteristics (speaker pitch, speaking rate, level of noise, etc.) but that you are free to use any handmade or generated text description that makes sense.
 
-In the rest of this guide, and to make it simple, we'll use the [4.8K-samples clean test split](https://huggingface.co/datasets/blabble-io/libritts_r/viewer/clean/test.clean) of [LibriTTS-R](https://huggingface.co/datasets/blabble-io/libritts_r/). We've annotated LibriTTS-R using [Data-Speech](https://github.com/huggingface/dataspeech) and shared the resulting dataset here: [parler-tts/libritts_r_tags_tagged_10k_generated](https://huggingface.co/datasets/parler-tts/libritts_r_tags_tagged_10k_generated).
+To train Parler-TTS v0.1, we used:
+* The full [LibriTTS-R dataset](https://huggingface.co/datasets/blabble-io/libritts_r), a 1K hours high-quality speech dataset.
+* A [10K hours subset](https://huggingface.co/datasets/parler-tts/mls_eng_10k) of [Multilingual LibriSpeech](https://huggingface.co/datasets/facebook/multilingual_librispeech).
+
+Both datasets have been annotated using the [Data-Speech](https://github.com/huggingface/dataspeech) recipe, respectively [here](https://huggingface.co/datasets/parler-tts/libritts_r_tags_tagged_10k_generated) and [here](https://huggingface.co/datasets/parler-tts/mls-eng-10k-tags_tagged_10k_generated).
 
 
 ## 3. Training
@@ -98,7 +109,7 @@ The script [`run_parler_tts_training.py`](/training/run_parler_tts_training.py) 
 2. pre-compute audio tokens
 3. train Parler-TTS
 
-In this example, we will train and evaluate on a subsample of the test split. This is purely to demonstrate how to use the training script, rather than recommended advice for defining train/validation splits. We advise that you train on the train splits of your dataset, evaluate and tune hyper-parameters on the validation split, and only test the final checkpoint on the test split.
+To train Parler-TTS v0.1, we roughly used:
 
 ```sh
 accelerate launch ./training/run_parler_tts_training.py \
@@ -108,104 +119,87 @@ accelerate launch ./training/run_parler_tts_training.py \
     --prompt_tokenizer_name "google/flan-t5-base" \
     --report_to "wandb" \
     --overwrite_output_dir true \
-    --train_dataset_name "blabble-io/libritts_r" \
-    --train_metadata_dataset_name "parler-tts/libritts_r_tags_tagged_10k_generated" \
-    --train_dataset_config_name "clean" \
-    --train_split_name "test.clean" \
-    --eval_dataset_name "blabble-io/libritts_r" \
-    --eval_metadata_dataset_name "parler-tts/libritts_r_tags_tagged_10k_generated" \
-    --eval_dataset_config_name "clean" \
-    --eval_split_name "test.clean" \
+    --train_dataset_name "blabble-io/libritts_r+blabble-io/libritts_r+blabble-io/libritts_r+parler-tts/mls_eng_10k" \
+    --train_metadata_dataset_name "parler-tts/libritts_r_tags_tagged_10k_generated+parler-tts/libritts_r_tags_tagged_10k_generated+parler-tts/libritts_r_tags_tagged_10k_generated+parler-tts/mls-eng-10k-tags_tagged_10k_generated" \
+    --train_dataset_config_name "clean+clean+other+default" \
+    --train_split_name "train.clean.360+train.clean.100+train.other.500+train" \
+    --eval_dataset_name "blabble-io/libritts_r+parler-tts/mls_eng_10k" \
+    --eval_metadata_dataset_name "parler-tts/libritts_r_tags_tagged_10k_generated+parler-tts/mls-eng-10k-tags_tagged_10k_generated" \
+    --eval_dataset_config_name "other+default" \
+    --eval_split_name "test.other+test" \
     --target_audio_column_name "audio" \
     --description_column_name "text_description" \
     --prompt_column_name "text" \
-    --max_duration_in_seconds 20 \
+    --max_duration_in_seconds 30 \
     --min_duration_in_seconds 2.0 \
+    --max_text_length 400 \
     --add_audio_samples_to_wandb true \
     --id_column_name "id" \
     --preprocessing_num_workers 8 \
     --do_train true \
-    --num_train_epochs 50 \
-    --gradient_accumulation_steps 1 \
+    --num_train_epochs 40 \
+    --gradient_accumulation_steps 8 \
     --gradient_checkpointing false \
-    --per_device_train_batch_size 4 \
-    --learning_rate 1e-3 \
+    --per_device_train_batch_size 3 \
+    --learning_rate 0.00095 \
     --adam_beta1 0.9 \
     --adam_beta2 0.99 \
     --weight_decay 0.01 \
-    --lr_scheduler_type "cosine" \
-    --warmup_steps 40 \
-    --logging_steps 2 \
+    --lr_scheduler_type "constant_with_warmup" \
+    --warmup_steps 20000 \
+    --logging_steps 1000 \
     --freeze_text_encoder true \
     --do_eval true \
     --predict_with_generate true \
     --include_inputs_for_metrics true \
     --evaluation_strategy steps \
-    --eval_steps 500 \
-    --save_steps 5000 \
+    --eval_steps 10000 \
+    --save_steps 10000 \
     --per_device_eval_batch_size 12 \
-    --audio_encoder_per_device_batch_size 24 \
+    --audio_encoder_per_device_batch_size 20 \
     --dtype "bfloat16" \
-    --dataloader_num_workers "16" \
     --seed 456 \
     --output_dir "./output_dir_training/" \
     --temporary_save_to_disk "./audio_code_tmp/" \
     --save_to_disk "./tmp_dataset_audio/" \
-    --max_eval_samples 48 \
-    --max_train_samples 96 \
-    --dataloader_num_workers 8
+    --max_eval_samples 96 \
+    --dataloader_num_workers 8 \
+    --group_by_length true
 ```
 
+In particular, note how multiple training datasets, metadataset, configurations and splits can be loaded by separating the dataset arguments by + symbols:
+```sh
+    "train_dataset_name": "blabble-io/libritts_r+blabble-io/libritts_r+blabble-io/libritts_r+parler-tts/mls_eng_10k",
+    "train_metadata_dataset_name": "parler-tts/libritts_r_tags_tagged_10k_generated+parler-tts/libritts_r_tags_tagged_10k_generated+parler-tts/libritts_r_tags_tagged_10k_generated+parler-tts/mls-eng-10k-tags_tagged_10k_generated",
+    "train_dataset_config_name": "clean+clean+other+default",
+    "train_split_name": "train.clean.360+train.clean.100+train.other.500+train",
+```
+
+
+Additionally, you can also write a JSON config file. Here, [starting_point_0.01.json](helpers/training_configs/starting_point_0.01.json) contains the exact same hyper-parameters than above and can be launched like that:
+```sh
+accelerate launch ./training/run_parler_tts_training.py ./helpers/training_configs/starting_point_0.01.json
+```
+
+Training logs will be reported to wandb, provided that you passed `--report_to "wandb"` to the arguments. An example of what a training log from the above training looks like can be found [here](https://wandb.ai/ylacombe/parler-tts-300M-punctuated/runs/q6h7hspc?nw=nwuserylacombe).
 
 > [!TIP]
-> Fine-tuning is as easy as modifying `model_name_or_path` to a pre-trained model.
-> For example: `--model_name_or_path parler-tts/parler_tts_300M_v0.1`.
+> Starting training a new model from scratch can easily be overwhelming, so here's what training looked like for v0.1: [logs](https://api.wandb.ai/links/ylacombe/ea449l81)
+
+Scaling to multiple GPUs using [distributed data parallelism (DDP)](https://pytorch.org/tutorials/beginner/ddp_series_theory.html) is trivial: simply run `accelerate config` and select the multi-GPU option, specifying the IDs of the GPUs you wish to use. The above script can then be run using DDP with no code changes. In our case, we used a node of 8 H100 80GB to train Parler-TTS v0.1 for around 4 days.
 
 
-Additionally, you can also write a JSON config file. Here, [librispeech_tts_r_300M_dummy.json](/helpers/training_configs/librispeech_tts_r_300M_dummy.json) contains the exact same hyper-parameters than above and can be launched like that:
-```sh
-accelerate launch ./training/run_parler_tts_training.py ./helpers/training_configs/librispeech_tts_r_300M_dummy.json
-```
-
-The above training script is a dummy example on only 96 training samples. It will take approximately 20 mn to complete on an 80 GB A100 GPU.
-
-Scaling to multiple GPUs using [distributed data parallelism (DDP)](https://pytorch.org/tutorials/beginner/ddp_series_theory.html) is trivial: simply run `accelerate config` and select the multi-GPU option, specifying the IDs of the GPUs you wish to use. The above script can then be run using DDP with no code changes. 
-
-Training logs will be reported to wandb, provided that you passed `--report_to "wandb"` to the arguments. An example of what a training log from the above training looks like can be found [here](https://wandb.ai/ylacombe/parler-speech/runs/gp55k6nj). Other examples of training log on scaled up training logs can be found in the next section.
-
-
-There are a few noteworthy arguments:
-1. `train_metadata_dataset_name` and `eval_metadata_dataset_name` precise, if necessary, the names of the dataset(s) that contain(s) the conditionning text descriptions. For example, the [dataset resulting from the Data-Speech annotation process](https://huggingface.co/datasets/parler-tts/libritts_r_tags_tagged_10k_generated) is saved without the audio column, as it's costly to write and push audio data, so it needs to be concatenated back to the original LibriTTS-R dataset.
+There are a few other noteworthy arguments:
+1. `train_metadata_dataset_name` and `eval_metadata_dataset_name` specify, if necessary, the names of the dataset(s) that contain(s) the conditionning text descriptions. For example, this [dataset resulting from the Data-Speech annotation process](https://huggingface.co/datasets/parler-tts/libritts_r_tags_tagged_10k_generated) is saved without the audio column, as it's costly to write and push audio data, so it needs to be concatenated back to the original LibriTTS-R dataset.
 2. As noted above, the script pre-computes audio tokens as computing audio codes is costly and only needs to be done once, since we're freezing the audio encoder. `audio_encoder_per_device_batch_size` is used to precise the per devie batch size for this pre-processing step.
 3. Additionnally, when scaling up the training data and iterating on the hyper-parameters or the model architecture, we might want to avoid recomputing the audio tokens at each training run. That's why we introduced two additional parameters, `save_to_disk` and `temporary_save_to_disk` that serves as temporary buffers to save intermediary datasets. Note that processed data is made of text and audio tokens which are much more memory efficient, so the additional required space is negligible.
 4. `predict_with_generate` and `add_audio_samples_to_wandb` are required to store generated audios and to compute WER and CLAP similarity.
-5. `freeze_text_encoder`: which allows to freeze the text encoder, to save compute resources. Note that our released model freeze the text encoder.
+5. `freeze_text_encoder`: which allows to freeze the text encoder, to save compute resources.
 
 And finally, two additional comments:
 1. `lr_scheduler_stype`: defines the learning rate schedule, one of `constant_with_warmup` or `cosine`. When experimenting with a training set-up or training for very few epochs, using `constant_with_warmup` is typically beneficial, since the learning rate remains high over the short training run. When performing longer training runs, using a `cosine` schedule shoud give better results.
 2. `dtype`: data type (dtype) in which the model computation should be performed. Note that this only controls the dtype of the computations (forward and backward pass), and not the dtype of the parameters or optimiser states.
 
-
-
-## 4. Scaling up - Discussions and tips
-
-[starting_point_0.01.json](helpers/training_configs/starting_point_0.01.json) offers a good hyper-paramters starting to scale-up the training recipe to thousand of hours of data: 
-
-```sh
-accelerate launch ./training/run_parler_tts_training.py ./helpers/training_configs/starting_point_0.01.json
-```
-
-In particular, note how multiple training datasets, metadataset, configurations and splits can be loaded by separating the dataset arguments by + symbols:
-```sh
-    "train_dataset_name": "blabble-io/libritts_r+blabble-io/libritts_r+blabble-io/libritts_r+stable-speech/mls_eng_10k",
-    "train_metadata_dataset_name": "stable-speech/libritts_r_tags_tagged_10k_generated+stable-speech/libritts_r_tags_tagged_10k_generated+stable-speech/libritts_r_tags_tagged_10k_generated+stable-speech/mls-eng-10k-tags_tagged_10k_generated",
-    "train_dataset_config_name": "clean+clean+other+default",
-    "train_split_name": "train.clean.360+train.clean.100+train.other.500+train",
-```
-
-Thus, the script generalises to any number of training datasets.
-
-
-> [!IMPORTANT]
-> Starting training a new model from scratch can easily be overwhelming,so here's what training looked like for v0.1: [logs](https://api.wandb.ai/links/ylacombe/ea449l81)
-
+> [!TIP]
+> Fine-tuning is as easy as modifying `model_name_or_path` to a pre-trained model.
+> For example: `--model_name_or_path parler-tts/parler_tts_300M_v0.1`.

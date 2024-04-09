@@ -13,12 +13,12 @@
     "output_dir": "./output_dir_training",
 
     "train_dataset_name": "blabble-io/libritts_r",
-    "train_metadata_dataset_name": "stable-speech/libritts_r_tags_tagged_10k_generated",
+    "train_metadata_dataset_name": "parler-tts/libritts_r_tags_tagged_10k_generated",
     "train_dataset_config_name": "clean",
     "train_split_name": "test.clean",
 
     "eval_dataset_name": "blabble-io/libritts_r",
-    "eval_metadata_dataset_name": "stable-speech/libritts_r_tags_tagged_10k_generated",
+    "eval_metadata_dataset_name": "parler-tts/libritts_r_tags_tagged_10k_generated",
     "eval_dataset_config_name": "clean",
     "eval_split_name": "test.clean",
 

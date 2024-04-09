@@ -12,13 +12,13 @@
     "overwrite_output_dir": true,
     "output_dir": "./output_dir_training",
 
-    "train_dataset_name": "blabble-io/libritts_r+blabble-io/libritts_r+blabble-io/libritts_r+stable-speech/mls_eng_10k",
-    "train_metadata_dataset_name": "stable-speech/libritts_r_tags_tagged_10k_generated+stable-speech/libritts_r_tags_tagged_10k_generated+stable-speech/libritts_r_tags_tagged_10k_generated+stable-speech/mls-eng-10k-tags_tagged_10k_generated",
+    "train_dataset_name": "blabble-io/libritts_r+blabble-io/libritts_r+blabble-io/libritts_r+parler-tts/mls_eng_10k",
+    "train_metadata_dataset_name": "parler-tts/libritts_r_tags_tagged_10k_generated+parler-tts/libritts_r_tags_tagged_10k_generated+parler-tts/libritts_r_tags_tagged_10k_generated+parler-tts/mls-eng-10k-tags_tagged_10k_generated",
     "train_dataset_config_name": "clean+clean+other+default",
     "train_split_name": "train.clean.360+train.clean.100+train.other.500+train",
 
-    "eval_dataset_name": "blabble-io/libritts_r+stable-speech/mls_eng_10k",
-    "eval_metadata_dataset_name": "stable-speech/libritts_r_tags_tagged_10k_generated+stable-speech/mls-eng-10k-tags_tagged_10k_generated",
+    "eval_dataset_name": "blabble-io/libritts_r+parler-tts/mls_eng_10k",
+    "eval_metadata_dataset_name": "parler-tts/libritts_r_tags_tagged_10k_generated+parler-tts/mls-eng-10k-tags_tagged_10k_generated",
     "eval_dataset_config_name": "other+default",
     "eval_split_name": "test.other+test",
 
@@ -41,7 +41,7 @@
 
     "do_train": true,
     "num_train_epochs": 40,
-    "gradient_accumulation_steps": 1,
+    "gradient_accumulation_steps": 8,
     "gradient_checkpointing": false,
     "per_device_train_batch_size": 3,
     "learning_rate": 0.00095,
