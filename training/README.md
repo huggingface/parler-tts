@@ -1,11 +1,12 @@
 # Training Parler-TTS
 
-> [!IMPORTANT]
-> **TL;DR:** After having followed the [installation steps](#requirements), you can reproduce the Parler-TTS v0.1 training recipe with the following command line:
+**TL;DR:** After having followed the [installation steps](#requirements), you can reproduce the Parler-TTS v0.1 training recipe with the following command line:
 
 ```sh
 accelerate launch ./training/run_parler_tts_training.py ./helpers/training_configs/starting_point_0.01.json
 ```
+
+-------------
 
 This sub-folder contains all the information to train or fine-tune your own Parler-TTS model. It consists of:
 - [1. An introduction to the Parler-TTS architecture](#a-architecture)
