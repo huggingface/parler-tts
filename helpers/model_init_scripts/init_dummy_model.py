@@ -7,8 +7,8 @@ import argparse
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("save_directory", type=str, help="Directory where to save the model and the decoder.")
-    parser.add_argument("text_model", type=str, help="Repository id or path to the text encoder.")
-    parser.add_argument("audio_model", type=str, help="Repository id or path to the audio encoder.")
+    parser.add_argument("--text_model", type=str, help="Repository id or path to the text encoder.")
+    parser.add_argument("--audio_model", type=str, help="Repository id or path to the audio encoder.")
 
     args = parser.parse_args()
 

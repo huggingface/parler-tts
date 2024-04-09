@@ -67,7 +67,8 @@ This library builds on top of a number of open-source giants, to whom we'd like 
 
 Special thanks to:
 - Dan Lyth and Simon King, from Stability AI and Edinburgh University respectively, for publishing such a promising and clear research paper: [Natural language guidance of high-fidelity text-to-speech with synthetic annotations](https://arxiv.org/abs/2402.01912).
-- and the many libraries used, namely [datasets](https://huggingface.co/docs/datasets/v2.17.0/en/index), [accelerate](https://huggingface.co/docs/accelerate/en/index), [jiwer](https://github.com/jitsi/jiwer), [wandb](https://wandb.ai/), and [transformers](https://huggingface.co/docs/transformers/index).
+- the many libraries used, namely [🤗 datasets](https://huggingface.co/docs/datasets/v2.17.0/en/index), [🤗 accelerate](https://huggingface.co/docs/accelerate/en/index), [jiwer](https://github.com/jitsi/jiwer), [wandb](https://wandb.ai/), and [🤗 transformers](https://huggingface.co/docs/transformers/index).
+- HuggingFace 🤗 for providing compute resources and time to explore!
 
 ## Contribution
 
@@ -80,6 +81,7 @@ Namely, we're looking at ways to improve both quality and speed:
 - Training:
     - Add PEFT compatibility to do Lora fine-tuning.
     - Add possibility to train without description column.
+    - Add notebook training.
     - Explore multilingual training.
     - Explore mono-speaker finetuning.
     - Explore more architectures.
@@ -97,6 +99,6 @@ Namely, we're looking at ways to improve both quality and speed:
   year = {2024},
   publisher = {GitHub},
   journal = {GitHub repository},
-  howpublished = {\url{https://github.com/ylacombe/dataspeech}}
+  howpublished = {\url{https://github.com/huggingface/parler-tts}}
 }
 ```

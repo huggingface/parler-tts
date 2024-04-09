@@ -68,7 +68,7 @@
 
     "per_device_eval_batch_size": 8,
 
-    "audio_encode_per_device_eval_batch_size":32,
+    "audio_encoder_per_device_batch_size":32,
     "dtype": "float16",
     "seed": 456,
 

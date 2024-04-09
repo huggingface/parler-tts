@@ -1,28 +1,28 @@
 {
-    "model_name_or_path": "/raid/yoach/tmp/artefacts/stable-speech-untrained-75M/",
+    "model_name_or_path": "/raid/yoach/tmp/artefacts/stable-speech-untrained-150M/",
     "save_to_disk":  "/raid/yoach/tmp/artefacts/libritts_r_1k_hours_processed/",
     "preprocessing_only": false,
 
 
     "feature_extractor_name":"ylacombe/dac_44khZ_8kbps",
-    "description_tokenizer_name":"google/t5-v1_1-small",
-    "prompt_tokenizer_name":"google/t5-v1_1-small",
+    "description_tokenizer_name":"google/flan-t5-base",
+    "prompt_tokenizer_name":"google/flan-t5-base",
 
     "push_to_hub": false,
-    "hub_model_id": "ylacombe/stable-speech-75M",
-    "report_to": ["wandb"],
-    "overwrite_output_dir": false,
-    "output_dir": "/raid/yoach/tmp/artefacts/training-75M-0.1/",
+    "hub_model_id": "ylacombe/stable-speech-150M",
+    "report_to": [],
+    "overwrite_output_dir": true,
+    "output_dir": "/raid/yoach/tmp/artefacts/training-150M-0.5/",
 
     "train_dataset_name": "blabble-io/libritts_r+blabble-io/libritts_r+blabble-io/libritts_r",
     "train_metadata_dataset_name": "stable-speech/libritts-r-tags-and-text-generated+stable-speech/libritts-r-tags-and-text-generated+stable-speech/libritts-r-tags-and-text-generated",
     "train_dataset_config_name": "clean+clean+other",
     "train_split_name": "train.clean.360+train.clean.100+train.other.500",
 
-    "eval_dataset_name": "blabble-io/libritts_r+blabble-io/libritts_r",
-    "eval_metadata_dataset_name": "stable-speech/libritts-r-tags-and-text-generated+stable-speech/libritts-r-tags-and-text-generated",
-    "eval_dataset_config_name": "clean+other",
-    "eval_split_name": "test.clean+test.other",
+    "eval_dataset_name": "blabble-io/libritts_r",
+    "eval_metadata_dataset_name": "stable-speech/libritts-r-tags-and-text-generated",
+    "eval_dataset_config_name": "other",
+    "eval_split_name": "test.other",
 
 
     "target_audio_column_name": "audio", 
@@ -30,8 +30,9 @@
     "prompt_column_name": "text",
 
     "max_eval_samples": 24,
+    "max_train_samples": 160,
     
-    "max_duration_in_seconds": 35,
+    "max_duration_in_seconds": 15.5,
     "min_duration_in_seconds": 2.0,
 
     "add_audio_samples_to_wandb": true,
@@ -43,20 +44,20 @@
     "decoder_start_token_id": 1025,
 
     "do_train": true,
-    "num_train_epochs": 1,
+    "num_train_epochs": 70,
     "gradient_accumulation_steps": 1,
-    "gradient_checkpointing": true,
-    "per_device_train_batch_size": 28,
-    "learning_rate": 1e-4,
+    "gradient_checkpointing": false,
+    "per_device_train_batch_size": 4,
+    "learning_rate": 1e-3,
     "adam_beta1": 0.9,
-    "adam_beta2": 0.999,
-    "weight_decay": 0.03,
+    "adam_beta2": 0.99,
+    "weight_decay": 0.01,
 
-    "lr_scheduler_type": "constant_with_warmup",
-    "warmup_steps":  5000,
+    "lr_scheduler_type": "cosine",
+    "warmup_steps":  40,
 
 
-    "logging_steps": 102,
+    "logging_steps": 2,
     "freeze_text_encoder": true,
 
 
@@ -64,14 +65,16 @@
     "predict_with_generate": true,
     "include_inputs_for_metrics": true,
     "evaluation_strategy": "steps",
-    "eval_steps": 2500,
-    "save_steps": 2499,
+    "eval_steps": 250,
+    "save_steps": 5000,
 
-    "per_device_eval_batch_size": 1,
+    "per_device_eval_batch_size": 12,
 
     "audio_encoder_per_device_batch_size":24,
-    "dtype": "bfloat16",
+    "text_encode_per_device_eval_batch_size":248,
+    "dtype": "float16",
     "seed": 456,
 
-    "dataloader_num_workers":16
+    "dataloader_num_workers":16,
+    "do_sample":true
 }

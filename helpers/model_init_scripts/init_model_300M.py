@@ -7,8 +7,8 @@ import argparse
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("save_directory", type=str, help="Directory where to save the model and the decoder.")
-    parser.add_argument("text_model", type=str, help="Repository id or path to the text encoder.")
-    parser.add_argument("audio_model", type=str, help="Repository id or path to the audio encoder.")
+    parser.add_argument("--text_model", type=str, help="Repository id or path to the text encoder.")
+    parser.add_argument("--audio_model", type=str, help="Repository id or path to the audio encoder.")
 
     args = parser.parse_args()
 
@@ -61,4 +61,4 @@ if __name__ == "__main__":
     model.generation_config.do_sample = True  # True
     model.generation_config.guidance_scale = 1  # 3.0
 
-    model.save_pretrained(os.path.join(args.save_directory, "stable-speech-untrained-300M/"))
+    model.save_pretrained(os.path.join(args.save_directory, "parler-tts-untrained-300M/"))
