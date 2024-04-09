@@ -54,7 +54,7 @@ with open(os.path.join(here, "parler_tts", "__init__.py"), encoding="utf-8") as 
 setuptools.setup(
     name="parler_tts",
     version=version,
-    description="Toolkit for reproducing Stability AI's text-to-speech model.",
+    description="Toolkit for using and training Parler-TTS, a high-quality text-to-speech model.",
     long_description=long_description,
     long_description_content_type="text/markdown",
     packages=setuptools.find_packages(),
