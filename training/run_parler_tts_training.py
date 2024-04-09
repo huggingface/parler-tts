@@ -235,11 +235,11 @@ class ModelArguments:
         metadata={"help": "Whether to freeze the text encoder."},
     )
     do_sample: bool = field(
-        default=False,
+        default=True,
         metadata={"help": "Whether to do sampling or greedy decoding."},
     )
     temperature: float = field(
-        default=0.4,
+        default=1.0,
         metadata={"help": "Temperature if sampling."},
     )
     max_length: int = field(
@@ -1018,10 +1018,10 @@ def main():
         {
             "pad_token_id": model_args.pad_token_id
             if model_args.pad_token_id is not None
-            else model.config.pad_token_id,
+            else config.pad_token_id,
             "decoder_start_token_id": model_args.decoder_start_token_id
             if model_args.decoder_start_token_id is not None
-            else model.config.decoder_start_token_id,
+            else config.decoder_start_token_id,
         }
     )
 

@@ -124,8 +124,6 @@ accelerate launch ./training/run_parler_tts_training.py \
     --add_audio_samples_to_wandb true \
     --id_column_name "id" \
     --preprocessing_num_workers 8 \
-    --pad_token_id 1024 \
-    --decoder_start_token_id 1025 \
     --do_train true \
     --num_train_epochs 50 \
     --gradient_accumulation_steps 1 \
