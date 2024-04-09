@@ -1,10 +1,5 @@
 # Parler-TTS
 
-[[Paper we reproduce]](https://arxiv.org/abs/2402.01912)
-[[Models]](https://huggingface.co/parler-tts)
-[[Training Code]](training)
-[[Interactive Demo]](https://huggingface.co/spaces/parler-tts/parler_tts_mini)
-
 > [!IMPORTANT]
 > We're proud to release Parler-TTS v0.1, our first 300M parameter model, trained on 10.5K hours of audio data.
 > In the coming weeks, we'll be working on scaling up to 50k hours of data, in preparation for the v1 model.
@@ -14,6 +9,15 @@ Parler-TTS is a lightweight text-to-speech (TTS) model that can generate high-qu
 Contrarily to other TTS models, Parler-TTS is a **fully open-source** release. All of the datasets, pre-processing, training code and weights are released publicly under permissive license, enabling the community to build on our work and develop their own powerful TTS models.
 
 This repository contains the inference and training code for Parler-TTS. It is designed to accompany the [Data-Speech](https://github.com/huggingface/dataspeech) repository for dataset annotation.
+
+
+## 📖 Quick Index
+* [Installation](#installation)
+* [Usage](#usage)
+* [Training](#training)
+* [Demo](https://huggingface.co/spaces/parler-tts/parler_tts_mini)
+* [Model weights and datasets](https://huggingface.co/parler-tts)
+
 
 ## Usage
 
@@ -44,7 +48,7 @@ audio_arr = generation.cpu().numpy().squeeze()
 sf.write("parler_tts_out.wav", audio_arr, model.config.sampling_rate)
 ```
 
-## Installation steps
+## Installation
 
 Parler-TTS has light-weight dependencies and can be installed in one line:
 
@@ -66,26 +70,6 @@ Special thanks to:
 - Descript for the [DAC codec model](https://github.com/descriptinc/descript-audio-codec)
 - Hugging Face 🤗 for providing compute resources and time to explore!
 
-## Contribution
-
-Contributions are welcome, as the project offers many possibilities for improvement and exploration.
-
-Namely, we're looking at ways to improve both quality and speed:
-- Datasets:
-    - Train on more data
-    - Add more features such as accents
-- Training:
-    - Add PEFT compatibility to do Lora fine-tuning.
-    - Add possibility to train without description column.
-    - Add notebook training.
-    - Explore multilingual training.
-    - Explore mono-speaker finetuning.
-    - Explore more architectures.
-- Optimization:
-    - Compilation and static cache
-    - Support to FA2 and SDPA
-- Evaluation:
-    - Add more evaluation metrics
 
 ## Citation
 
@@ -112,3 +96,25 @@ If you found this repository useful, please consider citing this work and also t
       primaryClass={cs.SD}
 }
 ```
+
+## Contribution
+
+Contributions are welcome, as the project offers many possibilities for improvement and exploration.
+
+Namely, we're looking at ways to improve both quality and speed:
+- Datasets:
+    - Train on more data
+    - Add more features such as accents
+- Training:
+    - Add PEFT compatibility to do Lora fine-tuning.
+    - Add possibility to train without description column.
+    - Add notebook training.
+    - Explore multilingual training.
+    - Explore mono-speaker finetuning.
+    - Explore more architectures.
+- Optimization:
+    - Compilation and static cache
+    - Support to FA2 and SDPA
+- Evaluation:
+    - Add more evaluation metrics
+

@@ -207,5 +207,5 @@ Thus, the script generalises to any number of training datasets.
 
 
 > [!IMPORTANT]
-> Starting training a new model from scratch can easily be overwhelming, here how the training of v0.01 looked like: [logs](https://api.wandb.ai/links/ylacombe/ea449l81)
+> Starting training a new model from scratch can easily be overwhelming,so here's what training looked like for v0.1: [logs](https://api.wandb.ai/links/ylacombe/ea449l81)
 
