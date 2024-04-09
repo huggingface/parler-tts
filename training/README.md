@@ -11,7 +11,6 @@ This sub-folder contains all the information to train or fine-tune your own Parl
 - [1. An introduction to the Parler-TTS architecture](#a-architecture)
 - [2. First steps to get started](#b-getting-started)
 - [3. Training guide](#c-training)
-- [4. Scaling up to 10.5K hours](#d-scaling-up---discussions-and-tips)
 
 
 ## 1. Architecture
