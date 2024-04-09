@@ -6,9 +6,7 @@ from transformers import AutoTokenizer, AutoFeatureExtractor, set_seed
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-
-repo_id = "ylacombe/parler_tts_300M_v0.09"
-# TODO: change repo id
+repo_id = "parler-tts/parler_tts_300M_v0.1"
 
 model = ParlerTTSForConditionalGeneration.from_pretrained(repo_id).to(device)
 tokenizer = AutoTokenizer.from_pretrained(repo_id)

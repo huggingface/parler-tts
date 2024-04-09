@@ -3,7 +3,7 @@
 [[Paper we reproduce]](https://arxiv.org/abs/2402.01912)
 [[Models]](https://huggingface.co/parler-tts)
 [[Training Code]](training)
-[[Interactive Demo]](TODO - linked to spaces)
+[[Interactive Demo]](https://huggingface.co/spaces/parler-tts/parler_tts_mini)
 
 > [!IMPORTANT]
 > We're proud to release Parler-TTS v0.1, our first 300M-parameters Parler-TTS model, trained on 10.5K hours of audio data.
@@ -16,7 +16,7 @@ Contrarily to standard TTS models, Parler-TTS allows you to directly describe th
 ## Usage
 
 > [!TIP]
-> You can directly try it out in an interactive demo [here](TODO: add link to spaces)!
+> You can directly try it out in an interactive demo [here](https://huggingface.co/spaces/parler-tts/parler_tts_mini)!
 
 Using Parler-TTS is as simple as "bonjour". Simply use the following inference snippet.
 
@@ -25,10 +25,8 @@ from parler_tts import ParlerTTSForConditionalGeneration
 from transformers import AutoTokenizer, AutoFeatureExtractor
 import soundfile as sf
 
-# TODO: change repo id
-
-model = ParlerTTSForConditionalGeneration.from_pretrained("ylacombe/parler_tts_300M_v0.09")
-tokenizer = AutoTokenizer.from_pretrained("ylacombe/parler_tts_300M_v0.09")
+model = ParlerTTSForConditionalGeneration.from_pretrained("parler-tts/parler_tts_300M_v0.1")
+tokenizer = AutoTokenizer.from_pretrained("parler-tts/parler_tts_300M_v0.1")
 
 prompt = "Hey, how are you doing today?"
 description = "A female speaker with a slightly low-pitched voice delivers her words quite expressively, in a very confined sounding environment with clear audio quality. She speaks very fast."
