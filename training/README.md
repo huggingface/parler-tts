@@ -1,13 +1,13 @@
 # Training Parler-TTS
 
 This sub-folder contains all the information to train or fine-tune your own Parler-TTS model. It consists of:
-- [A. An introduction to the Parler-TTS architecture](#a-architecture)
-- [B. First steps to get started](#b-getting-started)
-- [C. Training guide](#c-training)
-- [E. Scaling up to 10.5K hours](#d-scaling-up---discussions-and-tips)
+- [1. An introduction to the Parler-TTS architecture](#a-architecture)
+- [2. First steps to get started](#b-getting-started)
+- [3. Training guide](#c-training)
+- [4. Scaling up to 10.5K hours](#d-scaling-up---discussions-and-tips)
 
 
-## A. Architecture
+## 1. Architecture
 
 At the moment, Parler-TTS architecture is a carbon copy of the [MusicGen architecture](https://huggingface.co/docs/transformers/v4.39.3/en/model_doc/musicgen#model-structure) and can be decomposed into three distinct stages:
 >1. Text encoder: maps the text descriptions to a sequence of hidden-state representations. Parler-TTS uses a frozen text encoder initialised entirely from Flan-T5
@@ -20,14 +20,14 @@ Parler-TTS however introduces some small tweaks:
 - The audio encoder used is [**DAC**](https://descript.notion.site/Descript-Audio-Codec-11389fce0ce2419891d6591a68f814d5) instead of [Encodec](https://github.com/facebookresearch/encodec), as it exhibits better quality.
 
 
-## B. Getting started
+## 2. Getting started
 
 To get started, you need to follow a few steps:
 1. Install the requirements.
 2. Find or initialize the model you'll train on. 
 3. Find and/or annotate the dataset you'll train your model on.
 
-### 1. Requirements
+### Requirements
 
 The Parler-TTS code is written in [PyTorch](https://pytorch.org) and [Accelerate](https://huggingface.co/docs/accelerate/index). It uses some additional requirements, like [wandb](https://wandb.ai/), especially for logging and evaluation.
 
@@ -60,7 +60,7 @@ huggingface-cli login
 ```
 And then enter an authentication token from https://huggingface.co/settings/tokens. Create a new token if you do not have one already. You should make sure that this token has "write" privileges.
 
-### 2. Initialize a model from scratch or use a pre-trained one.
+### Initialize a model from scratch or use a pre-trained one.
 
 Depending on your compute resources and your dataset, you need to choose between fine-tuning a pre-trained model and training a new model from scratch.
 
@@ -79,7 +79,7 @@ python helpers/model_init_scripts/init_model_300M.py ./parler-tts-untrained-300M
 ```
 
 
-### 3. Create or find datasets
+### Create or find datasets
 
 To train your own Parler-TTS, you need datasets with 3 main features:
 - speech data
@@ -91,7 +91,7 @@ Note that we made the choice to use description of the main speech characteristi
 In the rest of this guide, and to make it simple, we'll use the [4.8K-samples clean test split](https://huggingface.co/datasets/blabble-io/libritts_r/viewer/clean/test.clean) of [LibriTTS-R](https://huggingface.co/datasets/blabble-io/libritts_r/). We've annotated LibriTTS-R using [Data-Speech](https://github.com/huggingface/dataspeech) and shared the resulting dataset here: [parler-tts/libritts_r_tags_tagged_10k_generated](https://huggingface.co/datasets/parler-tts/libritts_r_tags_tagged_10k_generated).
 
 
-## C. Training
+## 3. Training
 
 The script [`run_parler_tts_training.py`](/training/run_parler_tts_training.py) is an end-to-end script that:
 1. load dataset(s) and merge them to the annotation dataset(s) if necessary
@@ -187,7 +187,7 @@ And finally, two additional comments:
 
 
 
-## D. Scaling up - Discussions and tips
+## 4. Scaling up - Discussions and tips
 
 [starting_point_0.01.json](helpers/training_configs/starting_point_0.01.json) offers a good hyper-paramters starting to scale-up the training recipe to thousand of hours of data: 
 

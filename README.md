@@ -58,7 +58,17 @@ pip install git+https://github.com/huggingface/parler-tts.git
 
 ## Training
 
-TODO
+The [training folder](/training/) contains all the information to train or fine-tune your own Parler-TTS model. It consists of:
+- [1. An introduction to the Parler-TTS architecture](/training/README.md#1-architecture)
+- [2. The first steps to get started](/training/README.md#2-getting-started)
+- [3. A training guide](/training/README.md#3-training)
+
+> [!IMPORTANT]
+> **TL;DR:** After having followed the [installation steps](/training/README.md#requirements), you can reproduce the Parler-TTS v0.1 training recipe with the following command line:
+
+```sh
+accelerate launch ./training/run_parler_tts_training.py ./helpers/training_configs/starting_point_0.01.json
+```
 
 ## Acknowledgements
 
