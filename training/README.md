@@ -16,9 +16,9 @@ This sub-folder contains all the information to train or fine-tune your own Parl
 ## 1. Architecture
 
 At the moment, Parler-TTS architecture is a carbon copy of the [MusicGen architecture](https://huggingface.co/docs/transformers/v4.39.3/en/model_doc/musicgen#model-structure) and can be decomposed into three distinct stages:
->1. Text encoder: maps the text descriptions to a sequence of hidden-state representations. Parler-TTS uses a frozen text encoder initialised entirely from Flan-T5
->2. Parler-TTS decoder: a language model (LM) that auto-regressively generates audio tokens (or codes) conditional on the encoder hidden-state representations
->3. Audio codec: used to recover the audio waveform from the audio tokens predicted by the decoder. We use the [DAC model](https://github.com/descriptinc/descript-audio-codec) from Descript, although other codec models, such as [EnCodec](https://huggingface.co/facebook/encodec_48khz), can also be used
+1. Text encoder: maps the text descriptions to a sequence of hidden-state representations. Parler-TTS uses a frozen text encoder initialised entirely from Flan-T5
+2. Parler-TTS decoder: a language model (LM) that auto-regressively generates audio tokens (or codes) conditional on the encoder hidden-state representations
+3. Audio codec: used to recover the audio waveform from the audio tokens predicted by the decoder. We use the [DAC model](https://github.com/descriptinc/descript-audio-codec) from Descript, although other codec models, such as [EnCodec](https://huggingface.co/facebook/encodec_48khz), can also be used
 
 Parler-TTS however introduces some small tweaks:
 - The text **description** is passed through the text encoder and used in the cross-attention layers of the decoder.
