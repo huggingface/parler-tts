@@ -7,7 +7,7 @@ This sub-folder contains all the information to train or finetune you own Parler
 - [E. Scaling up to 10.5K hours](#d-scaling-up---discussions-and-tips)
 
 
-# A. Architecture
+## A. Architecture
 
 At the moment, Parler-TTS architecture is a carbon copy of [Musicgen architecture](https://huggingface.co/docs/transformers/v4.39.3/en/model_doc/musicgen#model-structure) and can be decomposed into three distinct stages:
 >1. Text encoder: maps the text inputs to a sequence of hidden-state representations. The pre-trained MusicGen models use a frozen text encoder from either T5 or Flan-T5
