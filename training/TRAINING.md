@@ -1,7 +1,7 @@
 # Training Parler-TTS
 
-This sub-folder contains all the information to train or finetune you own Parler-TTS model. It consists in:
-- [A. An introduction to Parler-TTS architecture](#a-architecture)
+This sub-folder contains all the information to train or fine-tune your own Parler-TTS model. It consists of:
+- [A. An introduction to the Parler-TTS architecture](#a-architecture)
 - [B. First steps to get started](#b-getting-started)
 - [C. Training guide](#c-training)
 - [E. Scaling up to 10.5K hours](#d-scaling-up---discussions-and-tips)
@@ -9,10 +9,10 @@ This sub-folder contains all the information to train or finetune you own Parler
 
 ## A. Architecture
 
-At the moment, Parler-TTS architecture is a carbon copy of [Musicgen architecture](https://huggingface.co/docs/transformers/v4.39.3/en/model_doc/musicgen#model-structure) and can be decomposed into three distinct stages:
->1. Text encoder: maps the text inputs to a sequence of hidden-state representations. The pre-trained MusicGen models use a frozen text encoder from either T5 or Flan-T5
+At the moment, Parler-TTS architecture is a carbon copy of the [MusicGen architecture](https://huggingface.co/docs/transformers/v4.39.3/en/model_doc/musicgen#model-structure) and can be decomposed into three distinct stages:
+>1. Text encoder: maps the text descriptions to a sequence of hidden-state representations. Parler-TTS uses a frozen text encoder initialised entirely from Flan-T5
 >2. Parler-TTS decoder: a language model (LM) that auto-regressively generates audio tokens (or codes) conditional on the encoder hidden-state representations
->3. Audio encoder: used to recover the audio waveform from the audio tokens predicted by the decoder
+>3. Audio codec: used to recover the audio waveform from the audio tokens predicted by the decoder. We use the [DAC model](https://github.com/descriptinc/descript-audio-codec) from Descript, although other codec models, such as [EnCodec](https://huggingface.co/facebook/encodec_48khz), can also be used
 
 Parler-TTS however introduces some small tweaks:
 - The text **description** is passed through the text encoder and used in the cross-attention layers of the decoder.
@@ -38,13 +38,13 @@ git clone https://github.com/huggingface/parler-tts.git
 cd parler-tts
 ```
 
-... And then to install requirements.
+... And then install the requirements:
 
 ```bash
 pip install -e .[train]
 ```
 
-Optionnally, you can create a wandb account and login to it by following [this guide](https://docs.wandb.ai/quickstart). [`wandb`](https://docs.wandb.ai/) allows for better tracking of the experiments metrics and losses.
+Optionally, you can create a wandb account and login to it by following [this guide](https://docs.wandb.ai/quickstart). [`wandb`](https://docs.wandb.ai/) allows for better tracking of the experiments metrics and losses.
 
 You also have the option to configure Accelerate by running the following command. Note that you should set the number of GPUs you wish to use for training, and also the data type (dtype) to your preferred dtype for training/inference (e.g. `bfloat16` on A100 GPUs, `float16` on V100 GPUs, etc.):
 
@@ -164,7 +164,7 @@ accelerate launch ./training/run_parler_tts_training.py \
 > For example: `--model_name_or_path parler-tts/parler_tts_300M_v0.1`.
 
 
-Additionnally, you can also write a JSON config file. Here, [librispeech_tts_r_300M_dummy.json](/helpers/training_configs/librispeech_tts_r_300M_dummy.json) contains the exact same hyper-parameters than above and can be launched like that:
+Additionally, you can also write a JSON config file. Here, [librispeech_tts_r_300M_dummy.json](/helpers/training_configs/librispeech_tts_r_300M_dummy.json) contains the exact same hyper-parameters than above and can be launched like that:
 ```sh
 accelerate launch ./training/run_parler_tts_training.py ./helpers/training_configs/librispeech_tts_r_300M_dummy.json
 ```

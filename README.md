@@ -6,12 +6,15 @@
 [[Interactive Demo]](https://huggingface.co/spaces/parler-tts/parler_tts_mini)
 
 > [!IMPORTANT]
-> We're proud to release Parler-TTS v0.1, our first 300M-parameters Parler-TTS model, trained on 10.5K hours of audio data.
+> We're proud to release Parler-TTS v0.1, our first 300M parameter model, trained on 10.5K hours of audio data.
+> In the coming weeks, we'll be working on scaling up to 50k hours of data, in preparation for the v1 model.
 
-Parler-TTS is a reproduction of the text-to-speech (TTS) model from the paper [Natural language guidance of high-fidelity text-to-speech with synthetic annotations](https://www.text-description-to-speech.com)
+Parler-TTS is a lightweight text-to-speech (TTS) model that can generate high-quality, natural sounding speech in the style of a given speaker (gender, pitch, speaking style, etc). It is a reproduction of work from the paper [Natural language guidance of high-fidelity text-to-speech with synthetic annotations](https://www.text-description-to-speech.com)
 by Dan Lyth and Simon King, from Stability AI and Edinburgh University respectively. 
 
-Contrarily to standard TTS models, Parler-TTS allows you to directly describe the speaker characteristics with a simple text description where you can modulate gender, pitch, speaking style, accent, etc.
+Contrarily to other TTS models, Parler-TTS is a **fully open-source** release. All of the datasets, pre-processing, training code and weights are released publicly under permissive license, enabling the community to build on our work and develop their own powerful TTS models.
+
+This repository contains the inference and training code for Parler-TTS. It is designed to accompany the [Data-Speech](https://github.com/ylacombe/dataspeech) repository for dataset annotation.
 
 ## Usage
 
@@ -22,7 +25,7 @@ Using Parler-TTS is as simple as "bonjour". Simply use the following inference s
 
 ```py
 from parler_tts import ParlerTTSForConditionalGeneration
-from transformers import AutoTokenizer, AutoFeatureExtractor
+from transformers import AutoTokenizer
 import soundfile as sf
 
 model = ParlerTTSForConditionalGeneration.from_pretrained("parler-tts/parler_tts_300M_v0.1")
@@ -68,7 +71,8 @@ This library builds on top of a number of open-source giants, to whom we'd like 
 Special thanks to:
 - Dan Lyth and Simon King, from Stability AI and Edinburgh University respectively, for publishing such a promising and clear research paper: [Natural language guidance of high-fidelity text-to-speech with synthetic annotations](https://arxiv.org/abs/2402.01912).
 - the many libraries used, namely [🤗 datasets](https://huggingface.co/docs/datasets/v2.17.0/en/index), [🤗 accelerate](https://huggingface.co/docs/accelerate/en/index), [jiwer](https://github.com/jitsi/jiwer), [wandb](https://wandb.ai/), and [🤗 transformers](https://huggingface.co/docs/transformers/index).
-- HuggingFace 🤗 for providing compute resources and time to explore!
+- Descript for the [DAC codec model](https://github.com/descriptinc/descript-audio-codec)
+- Hugging Face 🤗 for providing compute resources and time to explore!
 
 ## Contribution
 
@@ -92,6 +96,7 @@ Namely, we're looking at ways to improve both quality and speed:
     - Add more evaluation metrics
 
 ## Citation
+If you found this repository useful, please consider citing this work and also the original Stability AI paper:
 ```
 @misc{lacombe-etal-2024-parler-tts,
   author = {Yoach Lacombe and Vaibhav Srivastav and Sanchit Gandhi},
