@@ -9,12 +9,11 @@
 > We're proud to release Parler-TTS v0.1, our first 300M parameter model, trained on 10.5K hours of audio data.
 > In the coming weeks, we'll be working on scaling up to 50k hours of data, in preparation for the v1 model.
 
-Parler-TTS is a lightweight text-to-speech (TTS) model that can generate high-quality, natural sounding speech in the style of a given speaker (gender, pitch, speaking style, etc). It is a reproduction of work from the paper [Natural language guidance of high-fidelity text-to-speech with synthetic annotations](https://www.text-description-to-speech.com)
-by Dan Lyth and Simon King, from Stability AI and Edinburgh University respectively. 
+Parler-TTS is a lightweight text-to-speech (TTS) model that can generate high-quality, natural sounding speech in the style of a given speaker (gender, pitch, speaking style, etc). It is a reproduction of work from the paper [Natural language guidance of high-fidelity text-to-speech with synthetic annotations](https://www.text-description-to-speech.com) by Dan Lyth and Simon King, from Stability AI and Edinburgh University respectively.
 
 Contrarily to other TTS models, Parler-TTS is a **fully open-source** release. All of the datasets, pre-processing, training code and weights are released publicly under permissive license, enabling the community to build on our work and develop their own powerful TTS models.
 
-This repository contains the inference and training code for Parler-TTS. It is designed to accompany the [Data-Speech](https://github.com/ylacombe/dataspeech) repository for dataset annotation.
+This repository contains the inference and training code for Parler-TTS. It is designed to accompany the [Data-Speech](https://github.com/huggingface/dataspeech) repository for dataset annotation.
 
 ## Usage
 
@@ -27,42 +26,35 @@ Using Parler-TTS is as simple as "bonjour". Simply use the following inference s
 from parler_tts import ParlerTTSForConditionalGeneration
 from transformers import AutoTokenizer
 import soundfile as sf
+import torch
 
-model = ParlerTTSForConditionalGeneration.from_pretrained("parler-tts/parler_tts_300M_v0.1")
+device = "cuda:0" if torch.cuda.is_available() else "cpu"
+
+model = ParlerTTSForConditionalGeneration.from_pretrained("parler-tts/parler_tts_300M_v0.1").to(device)
 tokenizer = AutoTokenizer.from_pretrained("parler-tts/parler_tts_300M_v0.1")
 
 prompt = "Hey, how are you doing today?"
 description = "A female speaker with a slightly low-pitched voice delivers her words quite expressively, in a very confined sounding environment with clear audio quality. She speaks very fast."
 
-input_ids = tokenizer(description, return_tensors="pt").input_ids
-prompt_input_ids = tokenizer(prompt, return_tensors="pt").input_ids
+input_ids = tokenizer(description, return_tensors="pt").input_ids.to(device)
+prompt_input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(device)
 
 generation = model.generate(input_ids=input_ids, prompt_input_ids=prompt_input_ids)
 audio_arr = generation.cpu().numpy().squeeze()
 sf.write("parler_tts_out.wav", audio_arr, model.config.sampling_rate)
 ```
 
-
 ## Installation steps
 
 Parler-TTS has light-weight dependencies and can be installed in one line:
-```sh
-pip install parler-tts
-```
-
-## Gradio demo
-
-You can host your own Parler-TTS demo. First, install [`gradio`](https://www.gradio.app/) with:
 
 ```sh
-pip install gradio
+pip install git+https://github.com/huggingface/parler-tts.git
 ```
 
-Then, run:
+## Training
 
-```python
-python helpers/gradio_demo/app.py
-```
+TODO
 
 ## Acknowledgements
 
@@ -96,7 +88,9 @@ Namely, we're looking at ways to improve both quality and speed:
     - Add more evaluation metrics
 
 ## Citation
+
 If you found this repository useful, please consider citing this work and also the original Stability AI paper:
+
 ```
 @misc{lacombe-etal-2024-parler-tts,
   author = {Yoach Lacombe and Vaibhav Srivastav and Sanchit Gandhi},
@@ -105,5 +99,16 @@ If you found this repository useful, please consider citing this work and also t
   publisher = {GitHub},
   journal = {GitHub repository},
   howpublished = {\url{https://github.com/huggingface/parler-tts}}
+}
+```
+
+```
+@misc{lyth2024natural,
+      title={Natural language guidance of high-fidelity text-to-speech with synthetic annotations},
+      author={Dan Lyth and Simon King},
+      year={2024},
+      eprint={2402.01912},
+      archivePrefix={arXiv},
+      primaryClass={cs.SD}
 }
 ```
