@@ -1,15 +1,14 @@
 # Parler-TTS
 
-> [!IMPORTANT]
-> We're proud to release Parler-TTS v0.1, our first 300M parameter model, trained on 10.5K hours of audio data.
-> In the coming weeks, we'll be working on scaling up to 50k hours of data, in preparation for the v1 model.
-
 Parler-TTS is a lightweight text-to-speech (TTS) model that can generate high-quality, natural sounding speech in the style of a given speaker (gender, pitch, speaking style, etc). It is a reproduction of work from the paper [Natural language guidance of high-fidelity text-to-speech with synthetic annotations](https://www.text-description-to-speech.com) by Dan Lyth and Simon King, from Stability AI and Edinburgh University respectively.
 
 Contrarily to other TTS models, Parler-TTS is a **fully open-source** release. All of the datasets, pre-processing, training code and weights are released publicly under permissive license, enabling the community to build on our work and develop their own powerful TTS models.
 
 This repository contains the inference and training code for Parler-TTS. It is designed to accompany the [Data-Speech](https://github.com/huggingface/dataspeech) repository for dataset annotation.
 
+> [!IMPORTANT]
+> We're proud to release Parler-TTS v0.1, our first 300M parameter model, trained on 10.5K hours of audio data.
+> In the coming weeks, we'll be working on scaling up to 50k hours of data, in preparation for the v1 model.
 
 ## 📖 Quick Index
 * [Installation](#installation)
