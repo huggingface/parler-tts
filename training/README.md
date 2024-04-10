@@ -1,6 +1,6 @@
 # Training Parler-TTS
 
-**TL;DR:** After having followed the [installation steps](#requirements), you can reproduce the Parler-TTS v0.1 training recipe with the following command line:
+**TL;DR:** After having followed the [installation steps](#requirements), you can reproduce the [Parler-TTS Mini v0.1](https://huggingface.co/parler-tts/parler_tts_mini_v0.1) training recipe with the following command line:
 
 ```sh
 accelerate launch ./training/run_parler_tts_training.py ./helpers/training_configs/starting_point_0.01.json
@@ -79,7 +79,7 @@ You can also train you own model from scratch. You can find [here](/helpers/mode
 python helpers/model_init_scripts/init_dummy_model.py ./parler-tts-untrained-dummy --text_model "google-t5/t5-small" --audio_model "parler-tts/dac_44khZ_8kbps"
 ```
 
-In the rest of this guide, and to reproduce the Parler-TTS v0.1 training recipe, we'll use a 600-M parameters model that we'll initialize with:
+In the rest of this guide, and to reproduce the Parler-TTS Mini v0.1 training recipe, we'll use a 600M parameters model that we'll initialize with:
 
 ```sh
 python helpers/model_init_scripts/init_model_600M.py ./parler-tts-untrained-600M --text_model "google/flan-t5-base" --audio_model "parler-tts/dac_44khZ_8kbps"
@@ -95,7 +95,7 @@ To train your own Parler-TTS, you need datasets with 3 main features:
 
 Note that we made the choice to use description of the main speech characteristics (speaker pitch, speaking rate, level of noise, etc.) but that you are free to use any handmade or generated text description that makes sense.
 
-To train Parler-TTS v0.1, we used:
+To train Parler-TTS Mini v0.1, we used:
 * The full [LibriTTS-R dataset](https://huggingface.co/datasets/blabble-io/libritts_r), a 1K hours high-quality speech dataset.
 * A [10K hours subset](https://huggingface.co/datasets/parler-tts/mls_eng_10k) of [Multilingual LibriSpeech](https://huggingface.co/datasets/facebook/multilingual_librispeech).
 
@@ -109,7 +109,7 @@ The script [`run_parler_tts_training.py`](/training/run_parler_tts_training.py) 
 2. pre-compute audio tokens
 3. train Parler-TTS
 
-To train Parler-TTS v0.1, we roughly used:
+To train Parler-TTS Mini v0.1, we roughly used:
 
 ```sh
 accelerate launch ./training/run_parler_tts_training.py \

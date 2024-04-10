@@ -7,7 +7,7 @@ Contrarily to other TTS models, Parler-TTS is a **fully open-source** release. A
 This repository contains the inference and training code for Parler-TTS. It is designed to accompany the [Data-Speech](https://github.com/huggingface/dataspeech) repository for dataset annotation.
 
 > [!IMPORTANT]
-> We're proud to release Parler-TTS v0.1, our first 300M parameter model, trained on 10.5K hours of audio data.
+> We're proud to release [Parler-TTS Mini v0.1](https://huggingface.co/parler-tts/parler_tts_mini_v0.1), our first 600M parameter model, trained on 10.5K hours of audio data.
 > In the coming weeks, we'll be working on scaling up to 50k hours of data, in preparation for the v1 model.
 
 ## 📖 Quick Index
@@ -63,7 +63,7 @@ The [training folder](/training/) contains all the information to train or fine-
 - [3. A training guide](/training/README.md#3-training)
 
 > [!IMPORTANT]
-> **TL;DR:** After having followed the [installation steps](/training/README.md#requirements), you can reproduce the Parler-TTS v0.1 training recipe with the following command line:
+> **TL;DR:** After having followed the [installation steps](/training/README.md#requirements), you can reproduce the Parler-TTS Mini v0.1 training recipe with the following command line:
 
 ```sh
 accelerate launch ./training/run_parler_tts_training.py ./helpers/training_configs/starting_point_0.01.json
