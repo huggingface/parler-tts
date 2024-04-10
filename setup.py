@@ -1,4 +1,4 @@
-# Copyright 2023 The HuggingFace Team. All rights reserved.
+# Copyright 2024 The HuggingFace Team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,16 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 import os
-
 import setuptools
 
 
 _deps = [
     "transformers>=4.34.0",
-    "datasets[audio]>=2.14.5",
     "torch",
+    "sentencepiece",
+    "descript-audio-codec",
 ]
 
 _extras_dev_deps = [
@@ -30,13 +29,21 @@ _extras_dev_deps = [
     "ruff>=0.0.241,<=0.0.259",
 ]
 
+_extras_training_deps = [
+    "jiwer",
+    "wandb",
+    "accelerate",
+    "evaluate",
+    "datasets[audio]>=2.14.5",
+]
+
 here = os.path.abspath(os.path.dirname(__file__))
 
 with open(os.path.join(here, "README.md"), encoding="utf-8") as f:
     long_description = f.read()
 
 # read version
-with open(os.path.join(here, "stable_speech", "__init__.py"), encoding="utf-8") as f:
+with open(os.path.join(here, "parler_tts", "__init__.py"), encoding="utf-8") as f:
     for line in f:
         if line.startswith("__version__"):
             version = line.split("=")[1].strip().strip('"')
@@ -45,14 +52,15 @@ with open(os.path.join(here, "stable_speech", "__init__.py"), encoding="utf-8") 
         raise RuntimeError("Unable to find version string.")
 
 setuptools.setup(
-    name="stable_speech",
+    name="parler_tts",
     version=version,
-    description="Toolkit for reproducing Stability AI's text-to-speech model.",
+    description="Toolkit for using and training Parler-TTS, a high-quality text-to-speech model.",
     long_description=long_description,
     long_description_content_type="text/markdown",
     packages=setuptools.find_packages(),
     install_requires=_deps,
     extras_require={
         "dev": [_extras_dev_deps],
+        "train": [_extras_training_deps],
     },
 )
