@@ -64,4 +64,4 @@ if __name__ == "__main__":
     model.config.pad_token_id = encodec_vocab_size
     model.config.decoder_start_token_id = encodec_vocab_size+1
 
-    model.save_pretrained(os.path.join(args.save_directory, "parler-tts-untrained-300M/"))
+    model.save_pretrained(os.path.join(args.save_directory, "parler-tts-untrained-600M/"))

@@ -2,7 +2,7 @@ from parler_tts import ParlerTTSForConditionalGeneration
 from transformers import AutoTokenizer, AutoFeatureExtractor
 
 path = "TODO"
-repo_id = "parler_tts_300M"
+repo_id = "parler_tts_600M"
 
 
 AutoFeatureExtractor.from_pretrained("ylacombe/dac_44khZ_8kbps").push_to_hub(repo_id)

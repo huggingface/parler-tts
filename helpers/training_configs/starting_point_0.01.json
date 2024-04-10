@@ -1,5 +1,5 @@
 {
-    "model_name_or_path": "./parler-tts-untrained-300M/parler-tts-untrained-300M/",
+    "model_name_or_path": "./parler-tts-untrained-600M/parler-tts-untrained-600M/",
     "save_to_disk":  "./tmp_dataset_audio/",
     "temporary_save_to_disk": "./audio_code_tmp/",
 
