@@ -10,6 +10,11 @@ This repository contains the inference and training code for Parler-TTS. It is d
 > We're proud to release [Parler-TTS Mini v0.1](https://huggingface.co/parler-tts/parler_tts_mini_v0.1), our first 600M parameter model, trained on 10.5K hours of audio data.
 > In the coming weeks, we'll be working on scaling up to 50k hours of data, in preparation for the v1 model.
 
+<video width="320" height="240" controls>
+  <source src="https://github.com/huggingface/parler-tts/assets/52246514/251e2488-fe6e-42c1-81cd-814c5b7795b0" type="video/mp4">
+  Your browser does not support the video tag.
+</video>
+
 ## 📖 Quick Index
 * [Installation](#installation)
 * [Usage](#usage)
@@ -45,9 +50,6 @@ generation = model.generate(input_ids=input_ids, prompt_input_ids=prompt_input_i
 audio_arr = generation.cpu().numpy().squeeze()
 sf.write("parler_tts_out.wav", audio_arr, model.config.sampling_rate)
 ```
-
-https://github.com/huggingface/parler-tts/assets/52246514/251e2488-fe6e-42c1-81cd-814c5b7795b0
-
 
 ## Installation
 
