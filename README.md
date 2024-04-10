@@ -17,7 +17,6 @@ This repository contains the inference and training code for Parler-TTS. It is d
 * [Demo](https://huggingface.co/spaces/parler-tts/parler_tts_mini)
 * [Model weights and datasets](https://huggingface.co/parler-tts)
 
-
 ## Usage
 
 > [!TIP]
@@ -46,6 +45,9 @@ generation = model.generate(input_ids=input_ids, prompt_input_ids=prompt_input_i
 audio_arr = generation.cpu().numpy().squeeze()
 sf.write("parler_tts_out.wav", audio_arr, model.config.sampling_rate)
 ```
+
+https://github.com/huggingface/parler-tts/assets/52246514/251e2488-fe6e-42c1-81cd-814c5b7795b0
+
 
 ## Installation
 
