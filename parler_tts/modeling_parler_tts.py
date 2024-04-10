@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2023 Meta AI and The HuggingFace Inc. team. All rights reserved.
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" PyTorch StableSpeech model."""
+""" PyTorch ParlerTTS model."""
 import copy
 import inspect
 import math
@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from torch.nn import CrossEntropyLoss
-from transformers import AutoConfig, AutoModel
+from transformers import AutoConfig, AutoModel, AutoModelForTextEncoding
 from transformers.activations import ACT2FN
 from transformers.generation.configuration_utils import GenerationConfig
 from transformers.generation.logits_process import ClassifierFreeGuidanceLogitsProcessor, LogitsProcessorList
@@ -44,25 +44,103 @@ from transformers.utils import (
     replace_return_docstrings,
 )
 
-from .configuration_stable_speech import StableSpeechConfig, StableSpeechDecoderConfig
+from .configuration_parler_tts import ParlerTTSConfig, ParlerTTSDecoderConfig
+from .dac_wrapper import DACConfig, DACModel
+from transformers import AutoConfig, AutoModel
 
+AutoConfig.register("dac", DACConfig)
+AutoModel.register(DACConfig, DACModel)
 
 if TYPE_CHECKING:
     from transformers.generation.streamers import BaseStreamer
 
 logger = logging.get_logger(__name__)
 
-_CONFIG_FOR_DOC = "StableSpeechConfig"
-_CHECKPOINT_FOR_DOC = "facebook/stable_speech-small"
+_CONFIG_FOR_DOC = "ParlerTTSConfig"
+_CHECKPOINT_FOR_DOC = "facebook/parler_tts-small"
 
 MUSICGEN_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "facebook/stable_speech-small",
-    # See all StableSpeech models at https://huggingface.co/models?filter=stable_speech
+    "facebook/parler_tts-small",
+    # See all ParlerTTS models at https://huggingface.co/models?filter=parler_tts
 ]
 
 
+def apply_delay_pattern_mask(input_ids, decoder_pad_token_mask):
+    """Apply a delay pattern mask to the decoder input ids, only preserving predictions where
+    the mask is set to -1, and otherwise setting to the value detailed in the mask."""
+    seq_len = input_ids.shape[-1]
+    decoder_pad_token_mask = decoder_pad_token_mask[..., :seq_len]
+    input_ids = torch.where(decoder_pad_token_mask == -1, input_ids, decoder_pad_token_mask)
+    return input_ids
+
+
+def build_delay_pattern_mask(
+    input_ids: torch.LongTensor, bos_token_id: int, pad_token_id: int, max_length: int, num_codebooks: int
+):
+    """Build a delayed pattern mask to the input_ids. Each codebook is offset by the previous codebook by
+    one, giving a delayed pattern mask at the start of sequence and end of sequence. Take the example where there
+    are 4 codebooks and a max sequence length of 8, we have the delayed pattern mask of shape `(codebooks,
+    seq_len)`:
+    - [B, -1, -1, -1, -1, P, P, P]
+    - [B, B, -1, -1, -1, -1, P, P]
+    - [B, B, B, -1, -1, -1, -1, P]
+    - [B, B, B, B, -1, -1, -1, -1]
+    where P is the special padding token id and -1 indicates that the token is valid for prediction. If we include
+    a prompt (decoder input ids), the -1 positions indicate where new tokens should be predicted. Otherwise, the
+    mask is set to the value in the prompt:
+    - [B, a, b, -1, -1, P, P, P]
+    - [B, B, c, d, -1, -1, P, P]
+    - [B, B, B, e, f, -1, -1, P]
+    - [B, B, B, B, g, h, -1, -1]
+    where a-h indicate the input prompt (decoder input ids) that are offset by 1. Now, we only override the -1
+    tokens in our prediction.
+    """
+    # (bsz * num_codebooks, seq_len) -> (bsz, num_codebooks, seq_len)
+    input_ids = input_ids.reshape(-1, num_codebooks, input_ids.shape[-1])
+    bsz, num_codebooks, seq_len = input_ids.shape
+
+    input_ids_shifted = torch.ones((bsz, num_codebooks, max_length), dtype=torch.long, device=input_ids.device) * -1
+
+    # we only apply the mask if we have a large enough seq len - otherwise we return as is
+    if max_length < 2 * num_codebooks - 1:
+        return input_ids.reshape(bsz * num_codebooks, -1), input_ids_shifted.reshape(bsz * num_codebooks, -1)
+
+    # fill the shifted ids with the prompt entries, offset by the codebook idx
+    for codebook in range(num_codebooks):
+        # mono channel - loop over the codebooks one-by-one
+        input_ids_shifted[:, codebook, codebook : seq_len + codebook] = input_ids[:, codebook]
+
+    # construct a pattern mask that indicates the positions of padding tokens for each codebook
+    # first fill the upper triangular part (the EOS padding)
+    eos_delay_pattern = torch.triu(
+        torch.ones((num_codebooks, max_length), dtype=torch.bool), diagonal=max_length - num_codebooks + 1
+    )
+    # then fill the lower triangular part (the BOS padding)
+    bos_delay_pattern = torch.tril(torch.ones((num_codebooks, max_length), dtype=torch.bool))
+
+    bos_mask = ~(bos_delay_pattern).to(input_ids.device)
+    eos_mask = ~(eos_delay_pattern).to(input_ids.device)
+    mask = ~(bos_delay_pattern + eos_delay_pattern).to(input_ids.device)
+    input_ids = mask * input_ids_shifted + ~bos_mask * bos_token_id + ~eos_mask * pad_token_id
+
+    # find the first position to start generating - this is the first place we have the -1 token
+    # and will always be in the first codebook (since it has no codebook offset)
+    first_codebook_ids = input_ids[:, 0, :]
+    start_ids = (first_codebook_ids == -1).nonzero()[:, 1]
+    if len(start_ids) > 0:
+        first_start_id = min(start_ids)
+    else:
+        # we have no tokens that need to be filled - return entire matrix of input ids
+        first_start_id = seq_len
+
+    # (bsz * num_codebooks, seq_len) -> (bsz, num_codebooks, seq_len)
+    pattern_mask = input_ids.reshape(bsz * num_codebooks, -1)
+    input_ids = input_ids[..., :first_start_id].reshape(bsz * num_codebooks, -1)
+    return input_ids, pattern_mask
+
+
 @dataclass
-class StableSpeechUnconditionalInput(ModelOutput):
+class ParlerTTSUnconditionalInput(ModelOutput):
     """
     Args:
         encoder_outputs  (`Tuple[torch.FloatTensor]` of length 1, with tensor shape `(batch_size, sequence_length, hidden_size)`):
@@ -99,8 +177,8 @@ def shift_tokens_right(input_ids: torch.Tensor, pad_token_id: int, decoder_start
     return shifted_input_ids
 
 
-# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenSinusoidalPositionalEmbedding with Musicgen->StableSpeech
-class StableSpeechSinusoidalPositionalEmbedding(nn.Module):
+# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenSinusoidalPositionalEmbedding with Musicgen->ParlerTTS
+class ParlerTTSSinusoidalPositionalEmbedding(nn.Module):
     """This module produces sinusoidal positional embeddings of any length."""
 
     def __init__(self, num_positions: int, embedding_dim: int):
@@ -136,7 +214,7 @@ class StableSpeechSinusoidalPositionalEmbedding(nn.Module):
 
     @torch.no_grad()
     def forward(self, input_ids: torch.Tensor, past_key_values_length: int = 0):
-        bsz, codebooks, seq_len = input_ids.size()
+        bsz, seq_len, _ = input_ids.size()
         # Create the position ids from the input token ids.
         position_ids = (torch.arange(seq_len) + past_key_values_length).to(input_ids.device)
         # expand embeddings if needed
@@ -145,8 +223,8 @@ class StableSpeechSinusoidalPositionalEmbedding(nn.Module):
         return self.weights.index_select(0, position_ids.view(-1)).detach()
 
 
-# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenAttention with Musicgen->StableSpeech
-class StableSpeechAttention(nn.Module):
+# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenAttention with Musicgen->ParlerTTS
+class ParlerTTSAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
     def __init__(
@@ -157,7 +235,7 @@ class StableSpeechAttention(nn.Module):
         is_decoder: bool = False,
         bias: bool = True,
         is_causal: bool = False,
-        config: Optional[StableSpeechConfig] = None,
+        config: Optional[ParlerTTSConfig] = None,
     ):
         super().__init__()
         self.embed_dim = embed_dim
@@ -304,13 +382,13 @@ class StableSpeechAttention(nn.Module):
         return attn_output, attn_weights_reshaped, past_key_value
 
 
-# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenDecoderLayer with Musicgen->StableSpeech
-class StableSpeechDecoderLayer(nn.Module):
-    def __init__(self, config: StableSpeechDecoderConfig):
+# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenDecoderLayer with Musicgen->ParlerTTS
+class ParlerTTSDecoderLayer(nn.Module):
+    def __init__(self, config: ParlerTTSDecoderConfig):
         super().__init__()
         self.embed_dim = config.hidden_size
 
-        self.self_attn = StableSpeechAttention(
+        self.self_attn = ParlerTTSAttention(
             embed_dim=self.embed_dim,
             num_heads=config.num_attention_heads,
             dropout=config.attention_dropout,
@@ -322,7 +400,7 @@ class StableSpeechDecoderLayer(nn.Module):
         self.activation_dropout = config.activation_dropout
 
         self.self_attn_layer_norm = nn.LayerNorm(self.embed_dim)
-        self.encoder_attn = StableSpeechAttention(
+        self.encoder_attn = ParlerTTSAttention(
             self.embed_dim,
             config.num_attention_heads,
             dropout=config.attention_dropout,
@@ -424,17 +502,17 @@ class StableSpeechDecoderLayer(nn.Module):
         return outputs
 
 
-# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenPreTrainedModel with Musicgen->StableSpeech
-class StableSpeechPreTrainedModel(PreTrainedModel):
+# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenPreTrainedModel with Musicgen->ParlerTTS
+class ParlerTTSPreTrainedModel(PreTrainedModel):
     """
     An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
     models.
     """
 
-    config_class = StableSpeechDecoderConfig
+    config_class = ParlerTTSDecoderConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
-    _no_split_modules = ["StableSpeechDecoderLayer", "StableSpeechAttention"]
+    _no_split_modules = ["ParlerTTSDecoderLayer", "ParlerTTSAttention"]
 
     def _init_weights(self, module):
         std = self.config.initializer_factor
@@ -450,7 +528,7 @@ class StableSpeechPreTrainedModel(PreTrainedModel):
 
 MUSICGEN_START_DOCSTRING = r"""
 
-    The StableSpeech model was proposed in [Simple and Controllable Music Generation](https://arxiv.org/abs/2306.05284) by
+    The ParlerTTS model was proposed in [Simple and Controllable Music Generation](https://arxiv.org/abs/2306.05284) by
     Jade Copet, Felix Kreuk, Itai Gat, Tal Remez, David Kant, Gabriel Synnaeve, Yossi Adi, Alexandre Défossez. It is an
     encoder decoder transformer trained on the task of conditional music generation
 
@@ -463,7 +541,7 @@ MUSICGEN_START_DOCSTRING = r"""
     and behavior.
 
     Parameters:
-        config ([`StableSpeechConfig`]): Model configuration class with all the parameters of the model.
+        config ([`ParlerTTSConfig`]): Model configuration class with all the parameters of the model.
             Initializing with a config file does not load the weights associated with the model, only the
             configuration. Check out the [`~PreTrainedModel.from_pretrained`] method to load the model weights.
 """
@@ -553,6 +631,25 @@ MUSICGEN_INPUTS_DOCSTRING = r"""
 
             If `decoder_input_ids` and `decoder_inputs_embeds` are both unset, `decoder_inputs_embeds` takes the value
             of `inputs_embeds`.
+        prompt_input_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`):
+            Indices of input prompt sequence tokens in the vocabulary. Padding will be ignored by default should you provide
+            it.
+
+            Indices can be obtained using [`AutoTokenizer`]. See [`PreTrainedTokenizer.encode`] and
+            [`PreTrainedTokenizer.__call__`] for details.
+
+            [What are input IDs?](../glossary#input-ids)
+        prompt_attention_mask (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
+            Mask to avoid performing attention on padding prompt token indices. Mask values selected in `[0, 1]`:
+
+            - 1 for tokens that are **not masked**,
+            - 0 for tokens that are **masked**.
+
+            [What are attention masks?](../glossary#attention-mask)
+        prompt_inputs_embeds (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`, *optional*):
+            Optionally, instead of passing `prompt_input_ids` you can choose to directly pass an embedded representation.
+            This is useful if you want more control over how to convert `prompt_input_ids` indices into associated vectors
+            than the model's internal embedding lookup matrix.
         use_cache (`bool`, *optional*):
             If set to `True`, `past_key_values` key value states are returned and can be used to speed up decoding (see
             `past_key_values`).
@@ -605,6 +702,16 @@ MUSICGEN_DECODER_INPUTS_DOCSTRING = r"""
             - 0 for tokens that are **masked**.
 
             [What are attention masks?](../glossary#attention-mask)
+        prompt_hidden_states (`torch.FloatTensor` of shape `(batch_size, encoder_sequence_length, hidden_size)`, *optional*):
+            Sequence of prompt hidden-states at the output of the initial embedding layer. Concatenated to the input embeds.
+        prompt_attention_mask (`torch.LongTensor` of shape `(batch_size, encoder_sequence_length)`, *optional*):
+            Mask to avoid performing cross-attention on padding tokens indices of prompt input_ids. Mask values
+            selected in `[0, 1]`:
+
+            - 1 for tokens that are **not masked**,
+            - 0 for tokens that are **masked**.
+
+            [What are attention masks?](../glossary#attention-mask)
         head_mask (`torch.Tensor` of shape `(decoder_layers, decoder_attention_heads)`, *optional*):
             Mask to nullify selected heads of the attention modules. Mask values selected in `[0, 1]`:
 
@@ -644,13 +751,13 @@ MUSICGEN_DECODER_INPUTS_DOCSTRING = r"""
 """
 
 
-# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenDecoder with Musicgen->StableSpeech
-class StableSpeechDecoder(StableSpeechPreTrainedModel):
+# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenDecoder with Musicgen->ParlerTTS
+class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
     """
-    Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`StableSpeechDecoderLayer`]
+    Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`ParlerTTSDecoderLayer`]
     """
 
-    def __init__(self, config: StableSpeechDecoderConfig):
+    def __init__(self, config: ParlerTTSDecoderConfig):
         super().__init__(config)
         self.dropout = config.dropout
         self.layerdrop = config.layerdrop
@@ -659,17 +766,18 @@ class StableSpeechDecoder(StableSpeechPreTrainedModel):
         self.num_codebooks = config.num_codebooks
         self.embed_scale = math.sqrt(config.hidden_size) if config.scale_embedding else 1.0
 
-        embed_dim = config.vocab_size + 1
+        # TODO(YL): actually doesn't need the +1 if initialized correctly. Too late to change now.
+        embed_dim = config.vocab_size + 1  # + 1 for pad token id
         self.embed_tokens = nn.ModuleList(
             [nn.Embedding(embed_dim, config.hidden_size) for _ in range(config.num_codebooks)]
         )
 
-        self.embed_positions = StableSpeechSinusoidalPositionalEmbedding(
+        self.embed_positions = ParlerTTSSinusoidalPositionalEmbedding(
             config.max_position_embeddings,
             config.hidden_size,
         )
 
-        self.layers = nn.ModuleList([StableSpeechDecoderLayer(config) for _ in range(config.num_hidden_layers)])
+        self.layers = nn.ModuleList([ParlerTTSDecoderLayer(config) for _ in range(config.num_hidden_layers)])
         self.layer_norm = nn.LayerNorm(config.hidden_size)
 
         self.gradient_checkpointing = False
@@ -689,6 +797,8 @@ class StableSpeechDecoder(StableSpeechPreTrainedModel):
         attention_mask: Optional[torch.Tensor] = None,
         encoder_hidden_states: Optional[torch.FloatTensor] = None,
         encoder_attention_mask: Optional[torch.LongTensor] = None,
+        prompt_hidden_states: Optional[torch.FloatTensor] = None,
+        prompt_attention_mask: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.Tensor] = None,
         cross_attn_head_mask: Optional[torch.Tensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
@@ -725,6 +835,38 @@ class StableSpeechDecoder(StableSpeechPreTrainedModel):
         if inputs_embeds is None:
             inputs_embeds = sum([self.embed_tokens[codebook](input[:, codebook]) for codebook in range(num_codebooks)])
 
+        # if prompt_hidden_states, fuse to inputs_embeds and update input shape
+        if prompt_hidden_states is not None:
+            inputs_embeds = torch.cat([prompt_hidden_states, inputs_embeds], dim=1)
+
+        # As it is, the masked ids from the prompt will still count in the positions embeddings
+        if prompt_attention_mask is not None and attention_mask is not None:
+            attention_mask = torch.cat([prompt_attention_mask, attention_mask], dim=1)
+        elif prompt_attention_mask is not None:
+            logger.warning_once(
+                "`prompt_attention_mask` is specified but `attention_mask` is not. A full `attention_mask` will be created. Make sure this is the intended behaviour."
+            )
+            if past_key_values is None:
+                attention_mask = torch.cat(
+                    [
+                        prompt_attention_mask,
+                        torch.ones(input_shape, device=self.device, dtype=prompt_attention_mask.dtype),
+                    ],
+                    dim=1,
+                )
+            else:
+                generated_length = past_key_values_length - prompt_attention_mask.shape[1] + 1
+                attention_mask = torch.cat(
+                    [
+                        prompt_attention_mask,
+                        torch.ones(
+                            (input_shape[0], generated_length), device=self.device, dtype=prompt_attention_mask.dtype
+                        ),
+                    ],
+                    dim=1,
+                )
+
+        input_shape = inputs_embeds.size()[:-1]
         attention_mask = _prepare_4d_causal_attention_mask(
             attention_mask, input_shape, inputs_embeds, past_key_values_length
         )
@@ -737,7 +879,9 @@ class StableSpeechDecoder(StableSpeechPreTrainedModel):
             )
 
         # embed positions
-        positions = self.embed_positions(input, past_key_values_length)
+        # TODO: As it is, the masked ids from the prompt will still count in the positions embeddings
+        # maybe should modify position embeddings
+        positions = self.embed_positions(inputs_embeds, past_key_values_length)
 
         hidden_states = inputs_embeds + positions.to(inputs_embeds.device)
 
@@ -835,14 +979,14 @@ class StableSpeechDecoder(StableSpeechPreTrainedModel):
 
 
 @add_start_docstrings(
-    "The bare StableSpeech decoder model outputting raw hidden-states without any specific head on top.",
+    "The bare ParlerTTS decoder model outputting raw hidden-states without any specific head on top.",
     MUSICGEN_START_DOCSTRING,
 )
-# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenModel with Musicgen->StableSpeech
-class StableSpeechModel(StableSpeechPreTrainedModel):
-    def __init__(self, config: StableSpeechDecoderConfig):
+# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenModel with Musicgen->ParlerTTS
+class ParlerTTSModel(ParlerTTSPreTrainedModel):
+    def __init__(self, config: ParlerTTSDecoderConfig):
         super().__init__(config)
-        self.decoder = StableSpeechDecoder(config)
+        self.decoder = ParlerTTSDecoder(config)
         # Initialize weights and apply final processing
         self.post_init()
 
@@ -862,6 +1006,8 @@ class StableSpeechModel(StableSpeechPreTrainedModel):
         attention_mask: Optional[torch.Tensor] = None,
         encoder_hidden_states: Optional[torch.FloatTensor] = None,
         encoder_attention_mask: Optional[torch.LongTensor] = None,
+        prompt_hidden_states: Optional[torch.FloatTensor] = None,
+        prompt_attention_mask: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.Tensor] = None,
         cross_attn_head_mask: Optional[torch.Tensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
@@ -884,6 +1030,8 @@ class StableSpeechModel(StableSpeechPreTrainedModel):
             attention_mask=attention_mask,
             encoder_attention_mask=encoder_attention_mask,
             encoder_hidden_states=encoder_hidden_states,
+            prompt_hidden_states=prompt_hidden_states,
+            prompt_attention_mask=prompt_attention_mask,
             head_mask=head_mask,
             cross_attn_head_mask=cross_attn_head_mask,
             past_key_values=past_key_values,
@@ -907,15 +1055,15 @@ class StableSpeechModel(StableSpeechPreTrainedModel):
 
 
 @add_start_docstrings(
-    "The Stable Speech decoder model with a language modelling head on top.",
+    "The Parler-TTS decoder model with a language modelling head on top.",
     MUSICGEN_START_DOCSTRING,
 )
-# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenForCausalLM with Musicgen->StableSpeech
-class StableSpeechForCausalLM(StableSpeechPreTrainedModel):
-    def __init__(self, config: StableSpeechDecoderConfig):
+# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenForCausalLM with Musicgen->ParlerTTS
+class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
+    def __init__(self, config: ParlerTTSDecoderConfig):
         super().__init__(config)
 
-        self.model = StableSpeechModel(config)
+        self.model = ParlerTTSModel(config)
 
         self.num_codebooks = config.num_codebooks
         self.lm_heads = nn.ModuleList(
@@ -951,6 +1099,8 @@ class StableSpeechForCausalLM(StableSpeechPreTrainedModel):
         attention_mask: Optional[torch.Tensor] = None,
         encoder_hidden_states: Optional[torch.FloatTensor] = None,
         encoder_attention_mask: Optional[torch.LongTensor] = None,
+        prompt_hidden_states: Optional[torch.FloatTensor] = None,
+        prompt_attention_mask: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.Tensor] = None,
         cross_attn_head_mask: Optional[torch.Tensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
@@ -962,11 +1112,11 @@ class StableSpeechForCausalLM(StableSpeechPreTrainedModel):
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, CausalLMOutputWithCrossAttentions]:
         r"""
-        labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
+        labels (`torch.LongTensor` of shape `(batch_size, sequence_length, num_codebooks)`, *optional*):
             Labels for language modeling. Note that the labels **are shifted** inside the model, i.e. you can set
             `labels = input_ids` Indices are selected in `[-100, 0, ..., config.vocab_size]` All labels set to `-100`
             are ignored (masked), the loss is only computed for labels in `[0, ..., config.vocab_size]`
-                Returns:
+        Returns:
         """
 
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
@@ -976,6 +1126,8 @@ class StableSpeechForCausalLM(StableSpeechPreTrainedModel):
             attention_mask=attention_mask,
             encoder_hidden_states=encoder_hidden_states,
             encoder_attention_mask=encoder_attention_mask,
+            prompt_hidden_states=prompt_hidden_states,
+            prompt_attention_mask=prompt_attention_mask,
             head_mask=head_mask,
             cross_attn_head_mask=cross_attn_head_mask,
             past_key_values=past_key_values,
@@ -992,7 +1144,29 @@ class StableSpeechForCausalLM(StableSpeechPreTrainedModel):
 
         loss = None
         if labels is not None:
-            raise NotImplementedError("Training is not implemented for StableSpeech.")
+            loss = torch.zeros([], device=self.device)
+            # since encoder hidden states have concatenated to hidden states, take the last hidden states corresponding to labels
+            logits = lm_logits[:, :, -labels.shape[1] :]
+
+            loss_fct = CrossEntropyLoss()
+            loss = torch.zeros([], device=self.device)
+
+            # (bsz, vocab_size, seq_len, num_codebooks), (bsz, seq_len, num_codebooks)
+            labels = labels.masked_fill(labels == self.config.bos_token_id, -100)
+
+            # we use every codebooks token AND one single EOS at the end of each codebooks
+            mask = (input_ids.transpose(1, 2) != self.config.eos_token_id) & ((labels != -100))
+
+            # per codebook cross-entropy
+            for codebook in range(self.config.num_codebooks):
+                codebook_logits = logits[:, codebook].contiguous().view(-1, logits.shape[-1])
+                codebook_mask = mask[..., codebook].contiguous().view(-1)
+                codebook_labels = labels[..., codebook].contiguous().view(-1)
+
+                codebook_loss = loss_fct(codebook_logits[codebook_mask], codebook_labels[codebook_mask])
+                loss += codebook_loss
+
+            loss = loss / self.config.num_codebooks
 
         # (bsz, num_codebooks, seq_len, vocab_size) -> (bsz * num_codebooks, seq_len, vocab_size)
         lm_logits = lm_logits.reshape(-1, *lm_logits.shape[2:])
@@ -1016,6 +1190,8 @@ class StableSpeechForCausalLM(StableSpeechPreTrainedModel):
         attention_mask=None,
         encoder_hidden_states=None,
         encoder_attention_mask=None,
+        prompt_hidden_states=None,
+        prompt_attention_mask=None,
         head_mask=None,
         cross_attn_head_mask=None,
         past_key_values=None,
@@ -1027,6 +1203,7 @@ class StableSpeechForCausalLM(StableSpeechPreTrainedModel):
         if delay_pattern_mask is None:
             input_ids, delay_pattern_mask = self.build_delay_pattern_mask(
                 input_ids,
+                bos_token_id=self.generation_config.bos_token_id,
                 pad_token_id=self.generation_config.pad_token_id,
                 max_length=self.generation_config.max_length,
             )
@@ -1041,14 +1218,29 @@ class StableSpeechForCausalLM(StableSpeechPreTrainedModel):
             if attention_mask is not None:
                 attention_mask = attention_mask.repeat((2, 1))
 
+            if prompt_hidden_states is not None:
+                prompt_hidden_states = torch.concatenate(
+                    [prompt_hidden_states, torch.zeros_like(prompt_hidden_states)], dim=0
+                )
+
+            if prompt_attention_mask is not None:
+                prompt_attention_mask = torch.concatenate(
+                    [prompt_attention_mask, torch.zeros_like(prompt_attention_mask)], dim=0
+                )
+
         if past_key_values is not None:
             input_ids = input_ids[:, -1:]
+
+            # we only want to use prompt signal in the 1st generation step but keeping the attention mask
+            prompt_hidden_states = None
 
         return {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
             "encoder_hidden_states": encoder_hidden_states,
             "encoder_attention_mask": encoder_attention_mask,
+            "prompt_hidden_states": prompt_hidden_states,
+            "prompt_attention_mask": prompt_attention_mask,
             "head_mask": head_mask,
             "cross_attn_head_mask": cross_attn_head_mask,
             "past_key_values": past_key_values,
@@ -1056,77 +1248,35 @@ class StableSpeechForCausalLM(StableSpeechPreTrainedModel):
         }
 
     # Ignore copy
-    def build_delay_pattern_mask(self, input_ids: torch.LongTensor, pad_token_id: int, max_length: int = None):
+    def build_delay_pattern_mask(
+        self, input_ids: torch.LongTensor, bos_token_id: int, pad_token_id: int, max_length: int = None
+    ):
         """Build a delayed pattern mask to the input_ids. Each codebook is offset by the previous codebook by
         one, giving a delayed pattern mask at the start of sequence and end of sequence. Take the example where there
         are 4 codebooks and a max sequence length of 8, we have the delayed pattern mask of shape `(codebooks,
         seq_len)`:
-        - [P, -1, -1, -1, -1, P, P, P]
-        - [P, P, -1, -1, -1, -1, P, P]
-        - [P, P, P, -1, -1, -1, -1, P]
-        - [P, P, P, P, -1, -1, -1, -1]
+        - [B, -1, -1, -1, -1, P, P, P]
+        - [B, B, -1, -1, -1, -1, P, P]
+        - [B, B, B, -1, -1, -1, -1, P]
+        - [B, B, B, B, -1, -1, -1, -1]
         where P is the special padding token id and -1 indicates that the token is valid for prediction. If we include
         a prompt (decoder input ids), the -1 positions indicate where new tokens should be predicted. Otherwise, the
         mask is set to the value in the prompt:
-        - [P, a, b, -1, -1, P, P, P]
-        - [P, P, c, d, -1, -1, P, P]
-        - [P, P, P, e, f, -1, -1, P]
-        - [P, P, P, P, g, h, -1, -1]
+        - [B, a, b, -1, -1, P, P, P]
+        - [B, B, c, d, -1, -1, P, P]
+        - [B, B, B, e, f, -1, -1, P]
+        - [B, B, B, B, g, h, -1, -1]
         where a-h indicate the input prompt (decoder input ids) that are offset by 1. Now, we only override the -1
         tokens in our prediction.
         """
-        # (bsz * num_codebooks, seq_len) -> (bsz, num_codebooks, seq_len)
-        input_ids = input_ids.reshape(-1, self.num_codebooks, input_ids.shape[-1])
-        bsz, num_codebooks, seq_len = input_ids.shape
-
         max_length = max_length if max_length is not None else self.generation_config.max_length
-        input_ids_shifted = (
-            torch.ones((bsz, num_codebooks, max_length), dtype=torch.long, device=input_ids.device) * -1
-        )
-
-        # we only apply the mask if we have a large enough seq len - otherwise we return as is
-        if max_length < 2 * num_codebooks - 1:
-            return input_ids.reshape(bsz * num_codebooks, -1), input_ids_shifted.reshape(bsz * num_codebooks, -1)
-
-        # fill the shifted ids with the prompt entries, offset by the codebook idx
-        for codebook in range(num_codebooks):
-            # mono channel - loop over the codebooks one-by-one
-            input_ids_shifted[:, codebook, codebook : seq_len + codebook] = input_ids[:, codebook]
-
-        # construct a pattern mask that indicates the positions of padding tokens for each codebook
-        # first fill the upper triangular part (the EOS padding)
-        delay_pattern = torch.triu(
-            torch.ones((num_codebooks, max_length), dtype=torch.bool), diagonal=max_length - num_codebooks + 1
-        )
-        # then fill the lower triangular part (the BOS padding)
-        delay_pattern = delay_pattern + torch.tril(torch.ones((num_codebooks, max_length), dtype=torch.bool))
-
-        mask = ~delay_pattern.to(input_ids.device)
-        input_ids = mask * input_ids_shifted + ~mask * pad_token_id
-
-        # find the first position to start generating - this is the first place we have the -1 token
-        # and will always be in the first codebook (since it has no codebook offset)
-        first_codebook_ids = input_ids[:, 0, :]
-        start_ids = (first_codebook_ids == -1).nonzero()[:, 1]
-        if len(start_ids) > 0:
-            first_start_id = min(start_ids)
-        else:
-            # we have no tokens that need to be filled - return entire matrix of input ids
-            first_start_id = seq_len
-
-        # (bsz * num_codebooks, seq_len) -> (bsz, num_codebooks, seq_len)
-        pattern_mask = input_ids.reshape(bsz * num_codebooks, -1)
-        input_ids = input_ids[..., :first_start_id].reshape(bsz * num_codebooks, -1)
-        return input_ids, pattern_mask
+        return build_delay_pattern_mask(input_ids, bos_token_id, pad_token_id, max_length, self.num_codebooks)
 
     @staticmethod
     def apply_delay_pattern_mask(input_ids, decoder_pad_token_mask):
         """Apply a delay pattern mask to the decoder input ids, only preserving predictions where
         the mask is set to -1, and otherwise setting to the value detailed in the mask."""
-        seq_len = input_ids.shape[-1]
-        decoder_pad_token_mask = decoder_pad_token_mask[..., :seq_len]
-        input_ids = torch.where(decoder_pad_token_mask == -1, input_ids, decoder_pad_token_mask)
-        return input_ids
+        return apply_delay_pattern_mask(input_ids, decoder_pad_token_mask)
 
     @torch.no_grad()
     def generate(
@@ -1140,7 +1290,6 @@ class StableSpeechForCausalLM(StableSpeechPreTrainedModel):
         **kwargs,
     ):
         """
-
         Generates sequences of token ids for models with a language modeling head.
 
         <Tip warning={true}>
@@ -1279,10 +1428,11 @@ class StableSpeechForCausalLM(StableSpeechPreTrainedModel):
             )
 
         # 6. Prepare `input_ids` which will be used for auto-regressive generation
-        # Build the delay pattern mask for offsetting each codebook prediction by 1 (this behaviour is specific to Stable Speech)
+        # Build the delay pattern mask for offsetting each codebook prediction by 1 (this behaviour is specific to Parler-TTS)
         input_ids, delay_pattern_mask = self.build_delay_pattern_mask(
             input_ids,
-            pad_token_id=generation_config.decoder_start_token_id,
+            bos_token_id=generation_config.bos_token_id,
+            pad_token_id=generation_config.pad_token_id,
             max_length=generation_config.max_length,
         )
 
@@ -1380,14 +1530,20 @@ class StableSpeechForCausalLM(StableSpeechPreTrainedModel):
             output_ids = outputs.sequences
         else:
             output_ids = outputs
-
+            
         # apply the pattern mask to the final ids
         output_ids = self.apply_delay_pattern_mask(output_ids, model_kwargs["delay_pattern_mask"])
 
-        # revert the pattern delay mask by filtering the pad token id
-        output_ids = output_ids[output_ids != generation_config.pad_token_id].reshape(
-            batch_size, self.num_codebooks, -1
+        # revert the pattern delay mask by filtering the eos and bos token ids from the delay pattern mask
+        _, mask = self.build_delay_pattern_mask(
+            input_ids,
+            bos_token_id=generation_config.bos_token_id,
+            pad_token_id=generation_config.pad_token_id,
+            max_length=output_ids.shape[1],
         )
+
+        mask = (mask != generation_config.bos_token_id) & (mask != generation_config.pad_token_id)
+        output_ids = output_ids[mask].reshape(batch_size, self.num_codebooks, -1)
 
         if generation_config.return_dict_in_generate:
             outputs.sequences = output_ids
@@ -1397,31 +1553,29 @@ class StableSpeechForCausalLM(StableSpeechPreTrainedModel):
 
 
 @add_start_docstrings(
-    "The composite Stable Speech model with a text encoder, audio encoder and StableSpeech decoder, "
+    "The composite Parler-TTS model with a text encoder, audio encoder and ParlerTTS decoder, "
     "for music generation tasks with one or both of text and audio prompts.",
     MUSICGEN_START_DOCSTRING,
 )
-class StableSpeechForConditionalGeneration(PreTrainedModel):
-    config_class = StableSpeechConfig
+class ParlerTTSForConditionalGeneration(PreTrainedModel):
+    config_class = ParlerTTSConfig
     base_model_prefix = "encoder_decoder"
     main_input_name = "input_ids"
     supports_gradient_checkpointing = True
 
     def __init__(
         self,
-        config: Optional[StableSpeechConfig] = None,
+        config: Optional[ParlerTTSConfig] = None,
         text_encoder: Optional[PreTrainedModel] = None,
         audio_encoder: Optional[PreTrainedModel] = None,
-        decoder: Optional[StableSpeechForCausalLM] = None,
+        decoder: Optional[ParlerTTSForCausalLM] = None,
     ):
         if config is None and (text_encoder is None or audio_encoder is None or decoder is None):
             raise ValueError(
-                "Either a configuration has to be provided, or all three of text encoder, audio encoder and Stable Speech decoder."
+                "Either a configuration has to be provided, or all three of text encoder, audio encoder and Parler-TTS decoder."
             )
         if config is None:
-            config = StableSpeechConfig.from_sub_models_config(
-                text_encoder.config, audio_encoder.config, decoder.config
-            )
+            config = ParlerTTSConfig.from_sub_models_config(text_encoder.config, audio_encoder.config, decoder.config)
         else:
             if not isinstance(config, self.config_class):
                 raise ValueError(f"Config: {config} has to be of type {self.config_class}")
@@ -1429,7 +1583,7 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
         if config.decoder.cross_attention_hidden_size is not None:
             if config.decoder.cross_attention_hidden_size != config.text_encoder.hidden_size:
                 raise ValueError(
-                    "If `cross_attention_hidden_size` is specified in the Stable Speech decoder's configuration, it has to be equal"
+                    "If `cross_attention_hidden_size` is specified in the Parler-TTS decoder's configuration, it has to be equal"
                     f" to the text encoder's `hidden_size`. Got {config.decoder.cross_attention_hidden_size} for"
                     f" `config.decoder.cross_attention_hidden_size` and {config.text_encoder.hidden_size} for"
                     " `config.text_encoder.hidden_size`."
@@ -1449,7 +1603,7 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
             audio_encoder = AutoModel.from_config(config.audio_encoder)
 
         if decoder is None:
-            decoder = StableSpeechForCausalLM(config.decoder)
+            decoder = ParlerTTSForCausalLM(config.decoder)
 
         self.text_encoder = text_encoder
         self.audio_encoder = audio_encoder
@@ -1484,6 +1638,9 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
         ):
             self.enc_to_dec_proj = nn.Linear(self.text_encoder.config.hidden_size, self.decoder.config.hidden_size)
 
+        # prompt embeddings
+        self.embed_prompts = nn.Embedding(config.vocab_size, self.decoder.config.hidden_size)
+
         if self.text_encoder.get_output_embeddings() is not None:
             raise ValueError(
                 f"The encoder {self.text_encoder} should not have a LM Head. Please use a model without and LM Head"
@@ -1496,8 +1653,19 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
                 "following discussion on GitHub: https://github.com/huggingface/transformers/issues/23350"
             )
 
-        # tie text encoder, decoder weights if config set accordingly
-        self.tie_weights()
+        # Initialize projection and embedding layers and tie text encoder and decoder weights if set accordingly
+        self.post_init()
+
+    def _init_weights(self, module):
+        std = self.decoder.config.initializer_factor
+        if isinstance(module, (nn.Linear, nn.Conv1d)):
+            module.weight.data.normal_(mean=0.0, std=std)
+            if module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=std)
+            if module.padding_idx is not None:
+                module.weight.data[module.padding_idx].zero_()
 
     def tie_weights(self):
         # tie text encoder & decoder if needed
@@ -1536,15 +1704,15 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
         Example:
 
         ```python
-        >>> from transformers import StableSpeechForConditionalGeneration
+        >>> from parler_tts import ParlerTTSForConditionalGeneration
 
-        >>> model = StableSpeechForConditionalGeneration.from_pretrained("facebook/stable_speech-small")
+        >>> model = ParlerTTSForConditionalGeneration.from_pretrained("facebook/parler_tts-small")
         ```"""
 
         # At the moment fast initialization is not supported for composite models
         if kwargs.get("_fast_init", False):
             logger.warning(
-                "Fast initialization is currently not supported for StableSpeechForConditionalGeneration. "
+                "Fast initialization is currently not supported for ParlerTTSForConditionalGeneration. "
                 "Falling back to slow initialization..."
             )
         kwargs["_fast_init"] = False
@@ -1561,7 +1729,7 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
         **kwargs,
     ) -> PreTrainedModel:
         r"""
-        Instantiate a text encoder, an audio encoder, and a Stable Speech decoder from one, two or three base classes of the
+        Instantiate a text encoder, an audio encoder, and a Parler-TTS decoder from one, two or three base classes of the
         library from pretrained model checkpoints.
 
 
@@ -1592,7 +1760,7 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
 
                     - A string, the *model id* of a pretrained model hosted inside a model repo on huggingface.co.
                       Valid model ids can be located at the root-level, like `gpt2`, or namespaced under a user or
-                      organization name, like `facebook/stable_speech-small`.
+                      organization name, like `facebook/parler_tts-small`.
                     - A path to a *directory* containing model weights saved using
                       [`~PreTrainedModel.save_pretrained`], e.g., `./my_model_directory/`.
 
@@ -1615,18 +1783,18 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
         Example:
 
         ```python
-        >>> from transformers import StableSpeechForConditionalGeneration
+        >>> from parler_tts import ParlerTTSForConditionalGeneration
 
-        >>> # initialize a stable_speech model from a t5 text encoder, encodec audio encoder, and stable_speech decoder
-        >>> model = StableSpeechForConditionalGeneration.from_sub_models_pretrained(
+        >>> # initialize a parler_tts model from a t5 text encoder, encodec audio encoder, and parler_tts decoder
+        >>> model = ParlerTTSForConditionalGeneration.from_sub_models_pretrained(
         ...     text_encoder_pretrained_model_name_or_path="t5-base",
         ...     audio_encoder_pretrained_model_name_or_path="facebook/encodec_24khz",
-        ...     decoder_pretrained_model_name_or_path="facebook/stable_speech-small",
+        ...     decoder_pretrained_model_name_or_path="facebook/parler_tts-small",
         ... )
         >>> # saving model after fine-tuning
-        >>> model.save_pretrained("./stable_speech-ft")
+        >>> model.save_pretrained("./parler_tts-ft")
         >>> # load fine-tuned model
-        >>> model = StableSpeechForConditionalGeneration.from_pretrained("./stable_speech-ft")
+        >>> model = ParlerTTSForConditionalGeneration.from_pretrained("./parler_tts-ft")
         ```"""
 
         kwargs_text_encoder = {
@@ -1679,7 +1847,7 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
 
                 kwargs_text_encoder["config"] = encoder_config
 
-            text_encoder = AutoModel.from_pretrained(
+            text_encoder = AutoModelForTextEncoding.from_pretrained(
                 text_encoder_pretrained_model_name_or_path, *model_args, **kwargs_text_encoder
             )
 
@@ -1719,11 +1887,11 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
                 )
 
             if "config" not in kwargs_decoder:
-                decoder_config, kwargs_decoder = AutoConfig.from_pretrained(
+                decoder_config, kwargs_decoder = ParlerTTSDecoderConfig.from_pretrained(
                     decoder_pretrained_model_name_or_path, **kwargs_decoder, return_unused_kwargs=True
                 )
 
-                if isinstance(decoder_config, StableSpeechConfig):
+                if isinstance(decoder_config, ParlerTTSConfig):
                     decoder_config = decoder_config.decoder
 
                 if decoder_config.is_decoder is False or decoder_config.add_cross_attention is False:
@@ -1746,10 +1914,10 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
                     "`decoder_config` to `.from_sub_models_pretrained(...)`"
                 )
 
-            decoder = StableSpeechForCausalLM.from_pretrained(decoder_pretrained_model_name_or_path, **kwargs_decoder)
+            decoder = ParlerTTSForCausalLM.from_pretrained(decoder_pretrained_model_name_or_path, **kwargs_decoder)
 
         # instantiate config with corresponding kwargs
-        config = StableSpeechConfig.from_sub_models_config(
+        config = ParlerTTSConfig.from_sub_models_config(
             text_encoder.config, audio_encoder.config, decoder.config, **kwargs
         )
         return cls(text_encoder=text_encoder, audio_encoder=audio_encoder, decoder=decoder, config=config)
@@ -1768,6 +1936,9 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
         past_key_values: Tuple[Tuple[torch.FloatTensor]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         decoder_inputs_embeds: Optional[torch.FloatTensor] = None,
+        prompt_input_ids: Optional[torch.FloatTensor] = None,
+        prompt_attention_mask: Optional[torch.LongTensor] = None,
+        prompt_hidden_states: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
@@ -1780,11 +1951,11 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
 
         Examples:
         ```python
-        >>> from transformers import AutoProcessor, StableSpeechForConditionalGeneration
+        >>> from transformers import AutoProcessor, ParlerTTSForConditionalGeneration
         >>> import torch
 
-        >>> processor = AutoProcessor.from_pretrained("facebook/stable_speech-small")
-        >>> model = StableSpeechForConditionalGeneration.from_pretrained("facebook/stable_speech-small")
+        >>> processor = AutoProcessor.from_pretrained("facebook/parler_tts-small")
+        >>> model = ParlerTTSForConditionalGeneration.from_pretrained("facebook/parler_tts-small")
 
         >>> inputs = processor(
         ...     text=["80s pop track with bassy drums and synth", "90s rock song with loud guitars and heavy drums"],
@@ -1845,10 +2016,14 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
         if attention_mask is not None:
             encoder_hidden_states = encoder_hidden_states * attention_mask[..., None]
 
+        if prompt_hidden_states is None:
+            if prompt_input_ids is not None:
+                prompt_hidden_states = self.embed_prompts(prompt_input_ids)
+
         if (labels is not None) and (decoder_input_ids is None and decoder_inputs_embeds is None):
             decoder_input_ids = shift_tokens_right(
                 labels, self.config.pad_token_id, self.config.decoder_start_token_id
-            )
+            ).transpose(1, 2)
 
         elif decoder_input_ids is None and decoder_inputs_embeds is None:
             audio_encoder_outputs = self.audio_encoder(
@@ -1876,29 +2051,23 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
             attention_mask=decoder_attention_mask,
             encoder_hidden_states=encoder_hidden_states,
             encoder_attention_mask=attention_mask,
+            prompt_hidden_states=prompt_hidden_states,
+            prompt_attention_mask=prompt_attention_mask,
             inputs_embeds=decoder_inputs_embeds,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             use_cache=use_cache,
             past_key_values=past_key_values,
             return_dict=return_dict,
+            labels=labels,
             **kwargs_decoder,
         )
 
-        loss = None
-        if labels is not None:
-            logits = decoder_outputs.logits if return_dict else decoder_outputs[0]
-            loss_fct = CrossEntropyLoss()
-            loss = loss_fct(logits.view(-1, self.config.vocab_size), labels.view(-1))
-
         if not return_dict:
-            if loss is not None:
-                return (loss,) + decoder_outputs + encoder_outputs
-            else:
-                return decoder_outputs + encoder_outputs
+            return decoder_outputs + (encoder_hidden_states,)
 
         return Seq2SeqLMOutput(
-            loss=loss,
+            loss=decoder_outputs.loss,
             logits=decoder_outputs.logits,
             past_key_values=decoder_outputs.past_key_values,
             decoder_hidden_states=decoder_outputs.hidden_states,
@@ -1917,6 +2086,8 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
         head_mask=None,
         decoder_attention_mask=None,
         decoder_head_mask=None,
+        prompt_hidden_states=None,
+        prompt_attention_mask=None,
         cross_attn_head_mask=None,
         use_cache=None,
         encoder_outputs=None,
@@ -1927,7 +2098,8 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
         if decoder_delay_pattern_mask is None:
             decoder_input_ids, decoder_delay_pattern_mask = self.decoder.build_delay_pattern_mask(
                 decoder_input_ids,
-                self.generation_config.pad_token_id,
+                bos_token_id=self.generation_config.bos_token_id,
+                pad_token_id=self.generation_config.pad_token_id,
                 max_length=self.generation_config.max_length,
             )
 
@@ -1940,6 +2112,10 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
             decoder_input_ids = decoder_input_ids.repeat((2, 1))
             if decoder_attention_mask is not None:
                 decoder_attention_mask = decoder_attention_mask.repeat((2, 1))
+            if prompt_hidden_states is not None:
+                prompt_hidden_states = prompt_hidden_states.repeat((2, 1, 1))
+            if prompt_attention_mask is not None:
+                prompt_attention_mask = prompt_attention_mask.repeat((2, 1))
 
         if past_key_values is not None:
             past_length = past_key_values[0][0].shape[2]
@@ -1953,6 +2129,9 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
 
             decoder_input_ids = decoder_input_ids[:, remove_prefix_length:]
 
+            # we only want to use prompt signal in the 1st generation step but keeping the attention mask
+            prompt_hidden_states = None
+
         return {
             "input_ids": None,  # encoder_outputs is defined. input_ids not needed
             "encoder_outputs": encoder_outputs,
@@ -1963,6 +2142,8 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
             "head_mask": head_mask,
             "decoder_head_mask": decoder_head_mask,
             "cross_attn_head_mask": cross_attn_head_mask,
+            "prompt_hidden_states": prompt_hidden_states,
+            "prompt_attention_mask": prompt_attention_mask,
             "use_cache": use_cache,
         }
 
@@ -2059,6 +2240,10 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
 
         return model_kwargs
 
+    def _prepare_prompt_kwargs_for_generation(self, prompt_input_ids, model_kwargs):
+        model_kwargs["prompt_hidden_states"] = self.embed_prompts(prompt_input_ids)
+        return model_kwargs
+
     def _prepare_audio_encoder_kwargs_for_generation(
         self, input_values, model_kwargs, model_input_name: Optional[str] = None
     ):
@@ -2107,7 +2292,7 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
         return model_kwargs
 
     def prepare_decoder_input_ids_from_labels(self, labels: torch.Tensor):
-        return shift_tokens_right(labels, self.config.pad_token_id, self.config.decoder_start_token_id)
+        return shift_tokens_right(labels, self.config.pad_token_id, self.config.decoder_start_token_id).transpose(1, 2)
 
     def resize_token_embeddings(self, *args, **kwargs):
         raise NotImplementedError(
@@ -2143,6 +2328,16 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
                 batch_size = value.shape[0]
                 break
         return torch.ones((batch_size, 1), dtype=torch.long, device=self.device) * bos_token_id
+
+    def freeze_encoders(self, freeze_text_encoder=True):
+        if freeze_text_encoder:
+            for param in self.text_encoder.parameters():
+                param.requires_grad = False
+            self.text_encoder._requires_grad = False
+
+        for param in self.audio_encoder.parameters():
+            param.requires_grad = False
+        self.audio_encoder._requires_grad = False
 
     @torch.no_grad()
     def generate(
@@ -2278,6 +2473,13 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
                 guidance_scale=generation_config.guidance_scale,
             )
 
+        if "prompt_hidden_states" not in model_kwargs and "prompt_input_ids" in model_kwargs:
+            # `prompt_hidden_states` are created and added to `model_kwargs`
+            model_kwargs = self._prepare_prompt_kwargs_for_generation(
+                model_kwargs["prompt_input_ids"],
+                model_kwargs,
+            )
+
         if "decoder_input_ids" not in model_kwargs and "input_values" in model_kwargs:
             model_kwargs = self._prepare_audio_encoder_kwargs_for_generation(
                 model_kwargs["input_values"],
@@ -2324,10 +2526,11 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
                 " increasing `max_new_tokens`."
             )
 
-        # build the delay pattern mask for offsetting each codebook prediction by 1 (this behaviour is specific to Stable Speech)
+        # build the delay pattern mask for offsetting each codebook prediction by 1 (this behaviour is specific to Parler-TTS)
         input_ids, decoder_delay_pattern_mask = self.decoder.build_delay_pattern_mask(
             input_ids,
-            pad_token_id=generation_config.decoder_start_token_id,
+            bos_token_id=generation_config.bos_token_id,
+            pad_token_id=generation_config.pad_token_id,
             max_length=generation_config.max_length,
         )
         # stash the delay mask so that we don't have to recompute in each forward pass
@@ -2430,10 +2633,16 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
         # apply the pattern mask to the final ids
         output_ids = self.decoder.apply_delay_pattern_mask(output_ids, model_kwargs["decoder_delay_pattern_mask"])
 
-        # revert the pattern delay mask by filtering the pad token id
-        output_ids = output_ids[output_ids != generation_config.pad_token_id].reshape(
-            batch_size, self.decoder.num_codebooks, -1
+        # revert the pattern delay mask by filtering the eos and bos token ids from the delay pattern mask
+        _, mask = self.decoder.build_delay_pattern_mask(
+            input_ids,
+            bos_token_id=generation_config.bos_token_id,
+            pad_token_id=generation_config.pad_token_id,
+            max_length=output_ids.shape[1],
         )
+
+        mask = (mask != generation_config.bos_token_id) & (mask != generation_config.pad_token_id)
+        output_ids = output_ids[mask].reshape(batch_size, self.decoder.num_codebooks, -1)
 
         # append the frame dimension back to the audio codes
         output_ids = output_ids[None, ...]
@@ -2442,47 +2651,36 @@ class StableSpeechForConditionalGeneration(PreTrainedModel):
         if audio_scales is None:
             audio_scales = [None] * batch_size
 
-        output_values = self.audio_encoder.decode(
-            output_ids,
-            audio_scales=audio_scales,
-        ).audio_values
+        decode_sequentially = (
+            generation_config.bos_token_id in output_ids
+            or generation_config.pad_token_id in output_ids
+            or generation_config.eos_token_id in output_ids
+        )
+        if not decode_sequentially:
+            output_values = self.audio_encoder.decode(
+                output_ids,
+                audio_scales=audio_scales,
+            ).audio_values.squeeze(1)
+        else:
+            output_values = []
+            for sample_id in range(batch_size):
+                sample = output_ids[:, sample_id]
+                sample_mask = (sample >= self.audio_encoder.config.codebook_size).sum(dim=(0, 1)) == 0
+                if sample_mask.sum() > 0:
+                    sample = sample[:, :, sample_mask]
+                    sample = self.audio_encoder.decode(sample[None, ...], [audio_scales[sample_id]]).audio_values
+                    output_values.append(sample.transpose(0, 2))
+                else:
+                    output_values.append(torch.zeros((1, 1, 1)).to(self.device))
+            # TODO: we should keep track of output length as well. Not really straightfoward tbh
+            output_values = (
+                torch.nn.utils.rnn.pad_sequence(output_values, batch_first=True, padding_value=0)
+                .squeeze(-1)
+                .squeeze(-1)
+            )
 
         if generation_config.return_dict_in_generate:
             outputs.sequences = output_values
             return outputs
         else:
             return output_values
-
-    def get_unconditional_inputs(self, num_samples=1):
-        """
-        Helper function to get null inputs for unconditional generation, enabling the model to be used without the
-        feature extractor or tokenizer.
-
-        Args:
-            num_samples (int, *optional*):
-                Number of audio samples to unconditionally generate.
-            max_new_tokens (int, *optional*):
-                Number of tokens to generate for each sample. More tokens means longer audio samples, at the expense of
-                longer inference (since more audio tokens need to be generated per sample).
-
-        Example:
-        ```python
-        >>> from transformers import StableSpeechForConditionalGeneration
-
-        >>> model = StableSpeechForConditionalGeneration.from_pretrained("facebook/stable_speech-small")
-
-        >>> # get the unconditional (or 'null') inputs for the model
-        >>> unconditional_inputs = model.get_unconditional_inputs(num_samples=1)
-        >>> audio_samples = model.generate(**unconditional_inputs, max_new_tokens=256)
-        ```"""
-        last_hidden_state = torch.zeros(
-            (num_samples, 1, self.config.text_encoder.hidden_size), device=self.device, dtype=self.dtype
-        )
-
-        attention_mask = torch.zeros((num_samples, 1), device=self.device, dtype=torch.long)
-
-        return StableSpeechUnconditionalInput(
-            encoder_outputs=(last_hidden_state,),
-            attention_mask=attention_mask,
-            guidance_scale=1.0,
-        )

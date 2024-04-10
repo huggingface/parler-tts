@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2023 Meta AI and The HuggingFace Inc. team. All rights reserved.
+# Copyright 2024 and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" Stable Speech model configuration"""
+""" Parler-TTS model configuration"""
 
 from transformers import AutoConfig, logging
 from transformers.configuration_utils import PretrainedConfig
@@ -21,26 +21,26 @@ from transformers.configuration_utils import PretrainedConfig
 logger = logging.get_logger(__name__)
 
 MUSICGEN_PRETRAINED_CONFIG_ARCHIVE_MAP = {
-    "facebook/stable_speech-small": "https://huggingface.co/facebook/stable_speech-small/resolve/main/config.json",
-    # See all StableSpeech models at https://huggingface.co/models?filter=stable_speech
+    "facebook/parler_tts-small": "https://huggingface.co/facebook/parler_tts-small/resolve/main/config.json",
+    # See all ParlerTTS models at https://huggingface.co/models?filter=parler_tts
 }
 
 
-class StableSpeechDecoderConfig(PretrainedConfig):
+class ParlerTTSDecoderConfig(PretrainedConfig):
     r"""
-    This is the configuration class to store the configuration of an [`StableSpeechDecoder`]. It is used to instantiate a
-    Stable Speech decoder according to the specified arguments, defining the model architecture. Instantiating a
-    configuration with the defaults will yield a similar configuration to that of the Stable Speech
-    [facebook/stable_speech-small](https://huggingface.co/facebook/stable_speech-small) architecture.
+    This is the configuration class to store the configuration of an [`ParlerTTSDecoder`]. It is used to instantiate a
+    Parler-TTS decoder according to the specified arguments, defining the model architecture. Instantiating a
+    configuration with the defaults will yield a similar configuration to that of the Parler-TTS
+    [facebook/parler_tts-small](https://huggingface.co/facebook/parler_tts-small) architecture.
 
     Configuration objects inherit from [`PretrainedConfig`] and can be used to control the model outputs. Read the
     documentation from [`PretrainedConfig`] for more information.
 
 
     Args:
-        vocab_size (`int`, *optional*, defaults to 2048):
-            Vocabulary size of the StableSpeechDecoder model. Defines the number of different tokens that can be
-            represented by the `inputs_ids` passed when calling [`StableSpeechDecoder`].
+        vocab_size (`int`, *optional*, defaults to 2049):
+            Vocabulary size of the ParlerTTSDecoder model. Defines the number of different tokens that can be
+            represented by the `inputs_ids` passed when calling [`ParlerTTSDecoder`]. 
         hidden_size (`int`, *optional*, defaults to 1024):
             Dimensionality of the layers and the pooler layer.
         num_hidden_layers (`int`, *optional*, defaults to 24):
@@ -76,12 +76,12 @@ class StableSpeechDecoderConfig(PretrainedConfig):
             Whether input and output word embeddings should be tied.
     """
 
-    model_type = "stable_speech_decoder"
+    model_type = "parler_tts_decoder"
     keys_to_ignore_at_inference = ["past_key_values"]
 
     def __init__(
         self,
-        vocab_size=2048,
+        vocab_size=2049,  # vocab size = 2048 (encodec vocab size) + 1 (eos)
         max_position_embeddings=2048,
         num_hidden_layers=24,
         ffn_dim=4096,
@@ -97,8 +97,8 @@ class StableSpeechDecoderConfig(PretrainedConfig):
         scale_embedding=False,
         num_codebooks=4,
         pad_token_id=2048,
-        bos_token_id=2048,
-        eos_token_id=None,
+        bos_token_id=2049,
+        eos_token_id=2048,
         tie_word_embeddings=False,
         **kwargs,
     ):
@@ -127,16 +127,19 @@ class StableSpeechDecoderConfig(PretrainedConfig):
         )
 
 
-class StableSpeechConfig(PretrainedConfig):
+class ParlerTTSConfig(PretrainedConfig):
     r"""
-    This is the configuration class to store the configuration of a [`StableSpeechModel`]. It is used to instantiate a
-    Stable Speech model according to the specified arguments, defining the text encoder, audio encoder and Stable Speech decoder
+    This is the configuration class to store the configuration of a [`ParlerTTSModel`]. It is used to instantiate a
+    Parler-TTS model according to the specified arguments, defining the text encoder, audio encoder and Parler-TTS decoder
     configs.
 
     Configuration objects inherit from [`PretrainedConfig`] and can be used to control the model outputs. Read the
     documentation from [`PretrainedConfig`] for more information.
 
     Args:
+        vocab_size (`int`, *optional*, defaults to 1024):
+            Vocabulary size of the prompt token ids. Defines the number of different tokens that can be
+            represented by the `prompt_inputs_ids`.
         kwargs (*optional*):
             Dictionary of keyword arguments. Notably:
 
@@ -151,24 +154,24 @@ class StableSpeechConfig(PretrainedConfig):
 
     ```python
     >>> from transformers import (
-    ...     StableSpeechConfig,
-    ...     StableSpeechDecoderConfig,
+    ...     ParlerTTSConfig,
+    ...     ParlerTTSDecoderConfig,
     ...     T5Config,
     ...     EncodecConfig,
-    ...     StableSpeechForConditionalGeneration,
+    ...     ParlerTTSForConditionalGeneration,
     ... )
 
     >>> # Initializing text encoder, audio encoder, and decoder model configurations
     >>> text_encoder_config = T5Config()
     >>> audio_encoder_config = EncodecConfig()
-    >>> decoder_config = StableSpeechDecoderConfig()
+    >>> decoder_config = ParlerTTSDecoderConfig()
 
-    >>> configuration = StableSpeechConfig.from_sub_models_config(
+    >>> configuration = ParlerTTSConfig.from_sub_models_config(
     ...     text_encoder_config, audio_encoder_config, decoder_config
     ... )
 
-    >>> # Initializing a StableSpeechForConditionalGeneration (with random weights) from the facebook/stable_speech-small style configuration
-    >>> model = StableSpeechForConditionalGeneration(configuration)
+    >>> # Initializing a ParlerTTSForConditionalGeneration (with random weights) from the facebook/parler_tts-small style configuration
+    >>> model = ParlerTTSForConditionalGeneration(configuration)
 
     >>> # Accessing the model configuration
     >>> configuration = model.config
@@ -177,17 +180,17 @@ class StableSpeechConfig(PretrainedConfig):
     >>> config_decoder = model.config.decoder
 
     >>> # Saving the model, including its configuration
-    >>> model.save_pretrained("stable_speech-model")
+    >>> model.save_pretrained("parler_tts-model")
 
     >>> # loading model and config from pretrained folder
-    >>> stable_speech_config = StableSpeechConfig.from_pretrained("stable_speech-model")
-    >>> model = StableSpeechForConditionalGeneration.from_pretrained("stable_speech-model", config=stable_speech_config)
+    >>> parler_tts_config = ParlerTTSConfig.from_pretrained("parler_tts-model")
+    >>> model = ParlerTTSForConditionalGeneration.from_pretrained("parler_tts-model", config=parler_tts_config)
     ```"""
 
-    model_type = "stable_speech"
+    model_type = "parler_tts"
     is_composition = True
 
-    def __init__(self, **kwargs):
+    def __init__(self, vocab_size=1024, **kwargs):
         super().__init__(**kwargs)
         if "text_encoder" not in kwargs or "audio_encoder" not in kwargs or "decoder" not in kwargs:
             raise ValueError("Config has to be initialized with text_encoder, audio_encoder and decoder config")
@@ -200,9 +203,10 @@ class StableSpeechConfig(PretrainedConfig):
 
         decoder_config = kwargs.pop("decoder")
 
+        self.vocab_size = vocab_size
         self.text_encoder = AutoConfig.for_model(text_encoder_model_type, **text_encoder_config)
         self.audio_encoder = AutoConfig.for_model(audio_encoder_model_type, **audio_encoder_config)
-        self.decoder = StableSpeechDecoderConfig(**decoder_config)
+        self.decoder = ParlerTTSDecoderConfig(**decoder_config)
         self.is_encoder_decoder = True
 
     @classmethod
@@ -210,15 +214,15 @@ class StableSpeechConfig(PretrainedConfig):
         cls,
         text_encoder_config: PretrainedConfig,
         audio_encoder_config: PretrainedConfig,
-        decoder_config: StableSpeechDecoderConfig,
+        decoder_config: ParlerTTSDecoderConfig,
         **kwargs,
     ):
         r"""
-        Instantiate a [`StableSpeechConfig`] (or a derived class) from text encoder, audio encoder and decoder
+        Instantiate a [`ParlerTTSConfig`] (or a derived class) from text encoder, audio encoder and decoder
         configurations.
 
         Returns:
-            [`StableSpeechConfig`]: An instance of a configuration object
+            [`ParlerTTSConfig`]: An instance of a configuration object
         """
 
         return cls(
