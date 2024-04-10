@@ -33,8 +33,8 @@ import torch
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-model = ParlerTTSForConditionalGeneration.from_pretrained("parler-tts/parler_tts_300M_v0.1").to(device)
-tokenizer = AutoTokenizer.from_pretrained("parler-tts/parler_tts_300M_v0.1")
+model = ParlerTTSForConditionalGeneration.from_pretrained("parler-tts/parler_tts_mini_v0.1").to(device)
+tokenizer = AutoTokenizer.from_pretrained("parler-tts/parler_tts_mini_v0.1")
 
 prompt = "Hey, how are you doing today?"
 description = "A female speaker with a slightly low-pitched voice delivers her words quite expressively, in a very confined sounding environment with clear audio quality. She speaks very fast."

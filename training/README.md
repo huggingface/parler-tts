@@ -71,7 +71,7 @@ And then enter an authentication token from https://huggingface.co/settings/toke
 
 Depending on your compute resources and your dataset, you need to choose between fine-tuning a pre-trained model and training a new model from scratch.
 
-In that sense, we released a 300M checkpoint trained on 10.5K hours of annotated data under the repository id: [`parler-tts/parler_tts_300M_v0.1`](https://huggingface.co/parler-tts/parler_tts_300M_v0.1), that you can fine-tune for your own use-case.
+In that sense, we released a 600M checkpoint trained on 10.5K hours of annotated data under the repository id: [`parler-tts/parler_tts_mini_v0.1`](https://huggingface.co/parler-tts/parler_tts_mini_v0.1), that you can fine-tune for your own use-case.
 
 You can also train you own model from scratch. You can find [here](/helpers/model_init_scripts/) examples on how to initialize a model from scratch. For example, you can initialize a dummy model with:
 
@@ -79,10 +79,10 @@ You can also train you own model from scratch. You can find [here](/helpers/mode
 python helpers/model_init_scripts/init_dummy_model.py ./parler-tts-untrained-dummy --text_model "google-t5/t5-small" --audio_model "parler-tts/dac_44khZ_8kbps"
 ```
 
-In the rest of this guide, and to reproduce the Parler-TTS v0.1 training recipe, we'll use a 300-M parameters that we'll initialize with:
+In the rest of this guide, and to reproduce the Parler-TTS v0.1 training recipe, we'll use a 600-M parameters model that we'll initialize with:
 
 ```sh
-python helpers/model_init_scripts/init_model_300M.py ./parler-tts-untrained-300M --text_model "google/flan-t5-base" --audio_model "parler-tts/dac_44khZ_8kbps"
+python helpers/model_init_scripts/init_model_600M.py ./parler-tts-untrained-600M --text_model "google/flan-t5-base" --audio_model "parler-tts/dac_44khZ_8kbps"
 ```
 
 
@@ -113,7 +113,7 @@ To train Parler-TTS v0.1, we roughly used:
 
 ```sh
 accelerate launch ./training/run_parler_tts_training.py \
-    --model_name_or_path "./parler-tts-untrained-300M/parler-tts-untrained-300M/" \
+    --model_name_or_path "./parler-tts-untrained-600M/parler-tts-untrained-600M/" \
     --feature_extractor_name "parler-tts/dac_44khZ_8kbps" \
     --description_tokenizer_name "google/flan-t5-base" \
     --prompt_tokenizer_name "google/flan-t5-base" \
@@ -202,4 +202,4 @@ And finally, two additional comments:
 
 > [!TIP]
 > Fine-tuning is as easy as modifying `model_name_or_path` to a pre-trained model.
-> For example: `--model_name_or_path parler-tts/parler_tts_300M_v0.1`.
+> For example: `--model_name_or_path parler-tts/parler_tts_mini_v0.1`.
