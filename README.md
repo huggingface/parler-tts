@@ -30,7 +30,11 @@ pip install git+https://github.com/huggingface/parler-tts.git
 > [!TIP]
 > You can directly try it out in an interactive demo [here](https://huggingface.co/spaces/parler-tts/parler_tts_mini)!
 
-Using Parler-TTS is as simple as "bonjour". Simply use the following inference snippet.
+**Using the gradio demo locally**
+
+Open the terminal and run `python3 ./helpers/gradio_demo/app.py`
+
+**Using Parler-TTS is as simple as "bonjour". Simply use the following inference snippet.**
 
 ```py
 from parler_tts import ParlerTTSForConditionalGeneration
@@ -127,4 +131,7 @@ Namely, we're looking at ways to improve both quality and speed:
     - Support to FA2 and SDPA
 - Evaluation:
     - Add more evaluation metrics
+ 
+## License
 
+This repository is licensed under [Apache License](LICENSE)
