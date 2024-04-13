@@ -34,9 +34,9 @@ pip install git+https://github.com/huggingface/parler-tts.git
 
 Open the terminal and perform the following commands: 
 ```bash
-git clone https://github.com/huggingface/parler-tts.git`
+git clone https://github.com/huggingface/parler-tts.git
 cd parler-tts
-python3 ./helpers/gradio_demo/app.py`
+python3 ./helpers/gradio_demo/app.py
 ```
 
 **Using Parler-TTS is as simple as "bonjour". Simply use the following inference snippet.**
