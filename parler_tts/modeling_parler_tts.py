@@ -1454,7 +1454,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
             and generation_config.do_sample is True
         )
 
-        # 8. prepare batched CFG externally (to enable coexistance with the unbatched CFG)
+        # 8. prepare batched CFG externally (to enable coexistence with the unbatched CFG)
         if generation_config.guidance_scale is not None and generation_config.guidance_scale > 1:
             logits_processor.append(ClassifierFreeGuidanceLogitsProcessor(generation_config.guidance_scale))
             generation_config.guidance_scale = None
@@ -2552,7 +2552,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             and generation_config.do_sample is True
         )
 
-        # 8. prepare batched CFG externally (to enable coexistance with the unbatched CFG)
+        # 8. prepare batched CFG externally (to enable coexistence with the unbatched CFG)
         if generation_config.guidance_scale is not None and generation_config.guidance_scale > 1:
             logits_processor.append(ClassifierFreeGuidanceLogitsProcessor(generation_config.guidance_scale))
             generation_config.guidance_scale = None
