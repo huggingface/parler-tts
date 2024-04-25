@@ -836,7 +836,6 @@ def main():
             resume_step = None
 
         for batch in train_dataloader:
-            breakpoint()
             with accelerator.accumulate(model):
                 loss, train_metric = train_step(batch, accelerator, autocast_kwargs)
                 accelerator.backward(loss)
