@@ -54,10 +54,10 @@ from parler_tts import (
     build_delay_pattern_mask,
 )
 
-from parler_tts.utils import get_last_checkpoint, rotate_checkpoints, log_pred, log_metric
-from parler_tts.arguments import ModelArguments, DataTrainingArguments, ParlerTTSTrainingArguments
-from parler_tts.data import load_multiple_datasets, DataCollatorParlerTTSWithPadding, DataCollatorEncodecWithPadding
-from parler_tts.eval import clap_similarity, wer
+from training.utils import get_last_checkpoint, rotate_checkpoints, log_pred, log_metric
+from training.arguments import ModelArguments, DataTrainingArguments, ParlerTTSTrainingArguments
+from training.data import load_multiple_datasets, DataCollatorParlerTTSWithPadding, DataCollatorEncodecWithPadding
+from training.eval import clap_similarity, wer
 
 
 logger = logging.getLogger(__name__)
