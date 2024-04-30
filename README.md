@@ -57,6 +57,9 @@ sf.write("parler_tts_out.wav", audio_arr, model.config.sampling_rate)
 https://github.com/huggingface/parler-tts/assets/52246514/251e2488-fe6e-42c1-81cd-814c5b7795b0
 
 ## Training
+<a target="_blank" href="https://colab.research.google.com/github/ylacombe/scripts_and_notebooks/blob/main/Finetuning_Parler_TTS_on_a_single_speaker_dataset.ipynb"> 
+  <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/> 
+</a>
 
 The [training folder](/training/) contains all the information to train or fine-tune your own Parler-TTS model. It consists of:
 - [1. An introduction to the Parler-TTS architecture](/training/README.md#1-architecture)
