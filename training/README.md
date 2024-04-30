@@ -12,14 +12,13 @@ accelerate launch ./training/run_parler_tts_training.py ./helpers/training_confi
 
 -------------
 
-> [!IMPORTANT]
-> You can also follow [this fine-tuning guide](https://colab.research.google.com/github/ylacombe/scripts_and_notebooks/blob/main/Finetuning_Parler_TTS_on_a_single_speaker_dataset.ipynb) on a mono-speaker dataset example
-
 This sub-folder contains all the information to train or fine-tune your own Parler-TTS model. It consists of:
 - [1. An introduction to the Parler-TTS architecture](#a-architecture)
 - [2. First steps to get started](#b-getting-started)
 - [3. Training guide](#c-training)
 
+> [!IMPORTANT]
+> You can also follow [this fine-tuning guide](https://colab.research.google.com/github/ylacombe/scripts_and_notebooks/blob/main/Finetuning_Parler_TTS_on_a_single_speaker_dataset.ipynb) on a mono-speaker dataset example.
 
 ## 1. Architecture
 
