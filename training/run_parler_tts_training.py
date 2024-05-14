@@ -21,6 +21,7 @@ import os
 import re
 import sys
 import time
+from multiprocess import set_start_method
 from datetime import timedelta
 
 from tqdm import tqdm
@@ -32,15 +33,12 @@ from torch.utils.data import DataLoader
 import datasets
 from datasets import DatasetDict, Dataset, IterableDataset, concatenate_datasets
 
-import transformers
 from huggingface_hub import HfApi
-from multiprocess import set_start_method
-from torch.utils.data import DataLoader
-from tqdm import tqdm
+
+import transformers
 from transformers import AutoFeatureExtractor, AutoTokenizer, HfArgumentParser
 from transformers.trainer_pt_utils import LengthGroupedSampler
 from transformers.optimization import get_scheduler
-from transformers.trainer_pt_utils import LengthGroupedSampler
 from transformers.utils import send_example_telemetry
 
 
