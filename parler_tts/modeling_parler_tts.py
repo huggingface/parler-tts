@@ -1522,7 +1522,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
             output_ids = outputs.sequences
         else:
             output_ids = outputs
-            
+
         # apply the pattern mask to the final ids
         output_ids = self.apply_delay_pattern_mask(output_ids, model_kwargs["delay_pattern_mask"])
 
@@ -2460,7 +2460,10 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         if "encoder_outputs" not in model_kwargs:
             # encoder_outputs are created and added to `model_kwargs`
             model_kwargs = self._prepare_text_encoder_kwargs_for_generation(
-                inputs_tensor, model_kwargs, model_input_name, generation_config,
+                inputs_tensor,
+                model_kwargs,
+                model_input_name,
+                generation_config,
             )
 
         if "prompt_hidden_states" not in model_kwargs and "prompt_input_ids" in model_kwargs:

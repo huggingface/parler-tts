@@ -1,4 +1,4 @@
-import torch    
+import torch
 import evaluate
 from transformers import AutoModel, AutoProcessor, pipeline
 
@@ -19,6 +19,7 @@ def clap_similarity(clap_model_name_or_path, texts, audios, device):
     clap.to("cpu")
     clap_inputs.to("cpu")
     return cosine_sim.mean().to("cpu")
+
 
 def wer(asr_model_name_or_path, prompts, audios, device, per_device_eval_batch_size, sampling_rate):
     metric = evaluate.load("wer")
