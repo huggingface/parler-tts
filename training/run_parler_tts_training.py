@@ -21,7 +21,6 @@ import os
 import re
 import sys
 import time
-from dataclasses import dataclass, field
 from datetime import timedelta
 
 from tqdm import tqdm
@@ -38,11 +37,7 @@ from huggingface_hub import HfApi
 from multiprocess import set_start_method
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from transformers import (
-    AutoFeatureExtractor,
-    AutoTokenizer,
-    HfArgumentParser
-)
+from transformers import AutoFeatureExtractor, AutoTokenizer, HfArgumentParser
 from transformers.trainer_pt_utils import LengthGroupedSampler
 from transformers.optimization import get_scheduler
 from transformers.trainer_pt_utils import LengthGroupedSampler
@@ -306,9 +301,7 @@ def main():
     # update pad token id and decoder_start_token_id
     config.update(
         {
-            "pad_token_id": model_args.pad_token_id
-            if model_args.pad_token_id is not None
-            else config.pad_token_id,
+            "pad_token_id": model_args.pad_token_id if model_args.pad_token_id is not None else config.pad_token_id,
             "decoder_start_token_id": model_args.decoder_start_token_id
             if model_args.decoder_start_token_id is not None
             else config.decoder_start_token_id,
@@ -579,16 +572,18 @@ def main():
         texts = description_tokenizer.batch_decode(input_ids, skip_special_tokens=True)
         prompts = prompt_tokenizer.batch_decode(prompts, skip_special_tokens=True)
         audios = [a.cpu().numpy() for a in audios]
-        
+
         clap_score = clap_similarity(model_args.clap_model_name_or_path, texts, audios, device)
         results["clap"] = clap_score
 
-        word_error, transcriptions = wer(model_args.asr_model_name_or_path,
-                                        prompts,
-                                        audios,
-                                        device,
-                                        training_args.per_device_eval_batch_size,
-                                        sampling_rate)
+        word_error, transcriptions = wer(
+            model_args.asr_model_name_or_path,
+            prompts,
+            audios,
+            device,
+            training_args.per_device_eval_batch_size,
+            sampling_rate,
+        )
         results["wer"] = word_error
 
         return results, texts, prompts, audios, transcriptions
@@ -878,7 +873,9 @@ def main():
                     accelerator.save_state(output_dir=intermediate_dir, safe_serialization=False)
                     accelerator.wait_for_everyone()
                     if accelerator.is_main_process:
-                        rotate_checkpoints(training_args.save_total_limit, output_dir=training_args.output_dir, logger=logger)
+                        rotate_checkpoints(
+                            training_args.save_total_limit, output_dir=training_args.output_dir, logger=logger
+                        )
 
                         if cur_step == total_train_steps:
                             # un-wrap student model for save

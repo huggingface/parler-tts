@@ -3,6 +3,7 @@ from typing import Optional
 
 from transformers import Seq2SeqTrainingArguments
 
+
 @dataclass
 class ModelArguments:
     """
@@ -67,13 +68,16 @@ class ModelArguments:
     )
     asr_model_name_or_path: str = field(
         default="distil-whisper/distil-large-v2",
-        metadata={"help": "Used to compute WER during evaluation. Path to pretrained model or model identifier from huggingface.co/models"}
+        metadata={
+            "help": "Used to compute WER during evaluation. Path to pretrained model or model identifier from huggingface.co/models"
+        },
     )
     clap_model_name_or_path: str = field(
         default="laion/larger_clap_music_and_speech",
-        metadata={"help": "Used to compute audio similarity during evaluation. Path to pretrained model or model identifier from huggingface.co/models"}
+        metadata={
+            "help": "Used to compute audio similarity during evaluation. Path to pretrained model or model identifier from huggingface.co/models"
+        },
     )
-
 
 
 @dataclass

@@ -11,6 +11,7 @@ from tqdm import tqdm
 
 from accelerate import Accelerator
 
+
 @dataclass
 class DataCollatorEncodecWithPadding:
     """

@@ -8,6 +8,7 @@ from typing import Dict, List
 import torch
 from wandb import Audio
 
+
 def list_field(default=None, metadata=None):
     return field(default_factory=lambda: default, metadata=metadata)
 
