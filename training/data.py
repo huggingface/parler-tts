@@ -31,7 +31,12 @@ class DataCollatorEncodecWithPadding:
         audios = [feature[self.audio_column_name]["array"] for feature in features]
         len_audio = [len(audio) for audio in audios]
 
-        batch = self.feature_extractor(audios, return_tensors="pt", padding=self.padding, max_length=self.max_length)
+        # since resampling has already been performed in the 'load_multiple_datasets' function, 
+        # a fixed sampling_rate(44100hz) is passed to the feature_extractor.
+        sampling_rate = self.feature_extractor.sampling_rate
+        batch = self.feature_extractor(
+            audios, sampling_rate=sampling_rate, return_tensors="pt", padding=self.padding, max_length=self.max_length
+        )
         batch["len_audio"] = torch.tensor(len_audio).unsqueeze(1)
         return batch
 
