@@ -148,6 +148,8 @@ class ParlerTTSConfig(PretrainedConfig):
         vocab_size (`int`, *optional*, defaults to 1024):
             Vocabulary size of the prompt token ids. Defines the number of different tokens that can be
             represented by the `prompt_inputs_ids`.
+        prompt_cross_attention (`bool`, *optional*, defaults to `False`):
+            Whether to use cross-attention conditioning for the prompt (as well as the description).
         kwargs (*optional*):
             Dictionary of keyword arguments. Notably:
 
@@ -198,7 +200,7 @@ class ParlerTTSConfig(PretrainedConfig):
     model_type = "parler_tts"
     is_composition = True
 
-    def __init__(self, vocab_size=1024, **kwargs):
+    def __init__(self, vocab_size=1024, prompt_cross_attention=False, **kwargs):
         super().__init__(**kwargs)
         if "text_encoder" not in kwargs or "audio_encoder" not in kwargs or "decoder" not in kwargs:
             raise ValueError("Config has to be initialized with text_encoder, audio_encoder and decoder config")
@@ -212,6 +214,7 @@ class ParlerTTSConfig(PretrainedConfig):
         decoder_config = kwargs.pop("decoder")
 
         self.vocab_size = vocab_size
+        self.prompt_cross_attention = prompt_cross_attention
         self.text_encoder = AutoConfig.for_model(text_encoder_model_type, **text_encoder_config)
         self.audio_encoder = AutoConfig.for_model(audio_encoder_model_type, **audio_encoder_config)
         self.decoder = ParlerTTSDecoderConfig(**decoder_config)

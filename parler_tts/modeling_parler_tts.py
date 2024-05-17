@@ -1758,6 +1758,12 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         # prompt embeddings
         self.embed_prompts = nn.Embedding(config.vocab_size, self.decoder.config.hidden_size)
 
+        if config.prompt_cross_attention:
+            self.embed_positions = ParlerTTSSinusoidalPositionalEmbedding(
+                config.decoder.max_position_embeddings,
+                config.decoder.hidden_size,
+            )
+
         if self.text_encoder.get_output_embeddings() is not None:
             raise ValueError(
                 f"The encoder {self.text_encoder} should not have a LM Head. Please use a model without and LM Head"
@@ -2138,6 +2144,19 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             if prompt_input_ids is not None:
                 prompt_hidden_states = self.embed_prompts(prompt_input_ids)
 
+        if prompt_hidden_states is not None and self.config.prompt_cross_attention:
+            # add sinusoidal positional embedding
+            positions = self.embed_positions(prompt_hidden_states, 0)
+            prompt_hidden_states = prompt_hidden_states + positions.to(prompt_hidden_states.device)
+
+            # concatenate text description states with prompt description states
+            encoder_hidden_states = torch.cat([encoder_hidden_states, prompt_hidden_states], dim=1)
+            if prompt_attention_mask is not None:
+                attention_mask = torch.cat([attention_mask, prompt_attention_mask], dim=1)
+
+            prompt_hidden_states = None
+            prompt_attention_mask = None
+
         if (labels is not None) and (decoder_input_ids is None and decoder_inputs_embeds is None):
             decoder_input_ids = shift_tokens_right(
                 labels, self.config.pad_token_id, self.config.decoder_start_token_id
@@ -2250,6 +2269,9 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
 
             # we only want to use prompt signal in the 1st generation step but keeping the attention mask
             prompt_hidden_states = None
+
+            if self.config.prompt_cross_attention:
+                prompt_attention_mask = None
 
         return {
             "input_ids": None,  # encoder_outputs is defined. input_ids not needed
