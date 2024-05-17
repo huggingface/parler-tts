@@ -357,6 +357,8 @@ class ParlerTTSAttention(nn.Module):
 
         # get query proj
         query_states = self.q_proj(hidden_states) * self.scaling
+        query_states = self._shape(query_states, tgt_len, bsz)
+
         # get key, value proj
         # `past_key_value[0].shape[2] == key_value_states.shape[1]`
         # is checking that the `sequence_length` of the `past_key_value` is the same as
@@ -384,6 +386,10 @@ class ParlerTTSAttention(nn.Module):
             key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
             value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
 
+        if self.config.rope_embeddings:
+            cos, sin = self.rotary_emb(value_states, position_ids)
+            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, is_cross_attention)
+
         if self.is_decoder:
             # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
             # Further calls to cross_attention layer can then reuse all cross-attention
@@ -393,11 +399,6 @@ class ParlerTTSAttention(nn.Module):
             # can concat previous decoder key/value_states to current projected key/value_states (third "elif" case)
             # if encoder bi-directional self-attention `past_key_value` is always `None`
             past_key_value = (key_states, value_states)
-
-        query_states = self._shape(query_states, tgt_len, bsz)
-        if self.config.rope_embeddings:
-            cos, sin = self.rotary_emb(value_states, position_ids)
-            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, is_cross_attention)
 
         proj_shape = (bsz * self.num_heads, -1, self.head_dim)
         query_states = query_states.reshape(*proj_shape)
@@ -957,6 +958,36 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                 )
 
         input_shape = inputs_embeds.size()[:-1]
+
+        if not self.config.rope_embeddings:
+            # embed positions
+            # TODO: As it is, the masked ids from the prompt will still count in the positions embeddings
+            # maybe should modify position embeddings
+            positions = self.embed_positions(inputs_embeds, past_key_values_length)
+            hidden_states = inputs_embeds + positions.to(inputs_embeds.device)
+        else:
+            hidden_states = inputs_embeds
+
+            if position_ids is None:
+                if attention_mask is not None:
+                    # masked ids will **not** count in the position embeddings
+                    position_ids = attention_mask.long().cumsum(-1) - 1
+                    position_ids.masked_fill_(attention_mask == 0, 1)
+                else:
+                    position_ids = torch.arange(
+                        past_key_values_length, input_shape[1] + past_key_values_length,
+                        dtype=torch.long,
+                        device=inputs_embeds.device
+                    )
+                    position_ids = position_ids.unsqueeze(0)
+
+                # Some generation methods already pass only the last input ID
+                if position_ids.shape[1] > input_shape[1]:
+                    position_ids = position_ids[:, -input_shape[1]:]
+
+        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+
+
         attention_mask = _prepare_4d_causal_attention_mask(
             attention_mask, input_shape, inputs_embeds, past_key_values_length
         )
@@ -967,24 +998,6 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
             encoder_attention_mask = _prepare_4d_attention_mask(
                 encoder_attention_mask, inputs_embeds.dtype, tgt_len=input_shape[-1]
             )
-
-        if not self.config.rope_embeddings:
-            # embed positions
-            # TODO: As it is, the masked ids from the prompt will still count in the positions embeddings
-            # maybe should modify position embeddings
-            positions = self.embed_positions(inputs_embeds, past_key_values_length)
-            hidden_states = inputs_embeds + positions.to(inputs_embeds.device)
-        else:
-            hidden_states = inputs_embeds
-            if position_ids is None:
-                device = input_ids.device if input_ids is not None else inputs_embeds.device
-                position_ids = torch.arange(
-                    past_key_values_length, inputs_embeds.shape[1] + past_key_values_length, dtype=torch.long,
-                    device=device
-                )
-                position_ids = position_ids.unsqueeze(0)
-
-        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
 
         if self.gradient_checkpointing and self.training:
             if use_cache:
@@ -1248,7 +1261,6 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
 
         loss = None
         if labels is not None:
-            loss = torch.zeros([], device=self.device)
             # since encoder hidden states have concatenated to hidden states, take the last hidden states corresponding to labels
             logits = lm_logits[:, :, -labels.shape[1] :]
 
@@ -2224,12 +2236,6 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             if prompt_attention_mask is not None:
                 prompt_attention_mask = prompt_attention_mask.repeat((2, 1))
 
-        decoder_position_ids = kwargs.get("decoder_position_ids", None)
-        if decoder_attention_mask is not None and decoder_position_ids is None:
-            # create position_ids on the fly for batch generation
-            decoder_position_ids = decoder_attention_mask.long().cumsum(-1) - 1
-            decoder_position_ids.masked_fill_(decoder_attention_mask == 0, 1)
-
         if past_key_values is not None:
             past_length = past_key_values[0][0].shape[2]
 
@@ -2242,9 +2248,6 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
 
             decoder_input_ids = decoder_input_ids[:, remove_prefix_length:]
 
-            if decoder_position_ids is not None:
-                decoder_position_ids = decoder_position_ids[:, remove_prefix_length:]
-
             # we only want to use prompt signal in the 1st generation step but keeping the attention mask
             prompt_hidden_states = None
 
@@ -2253,7 +2256,6 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             "encoder_outputs": encoder_outputs,
             "past_key_values": past_key_values,
             "decoder_input_ids": decoder_input_ids,
-            "decoder_position_ids": decoder_position_ids,
             "attention_mask": attention_mask,
             "decoder_attention_mask": decoder_attention_mask,
             "head_mask": head_mask,
