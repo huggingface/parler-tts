@@ -18,7 +18,7 @@ import inspect
 import math
 import random
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Union, List
 
 import torch
 import torch.nn as nn
@@ -222,8 +222,77 @@ class ParlerTTSSinusoidalPositionalEmbedding(nn.Module):
             self.make_weights(seq_len + self.offset, self.embedding_dim)
         return self.weights.index_select(0, position_ids.view(-1)).detach()
 
+# Copied from transformers.models.llama.modeling_llama.LlamaRotaryEmbedding with Llama->ParlerTTS
+class ParlerTTSRotaryEmbedding(nn.Module):
+    def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None, scaling_factor=1.0):
+        super().__init__()
+        self.scaling_factor = scaling_factor
+        self.dim = dim
+        self.max_position_embeddings = max_position_embeddings
+        self.base = base
+        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2, dtype=torch.int64).float().to(device) / self.dim))
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
+        # For BC we register cos and sin cached
+        self.max_seq_len_cached = max_position_embeddings
+        t = torch.arange(self.max_seq_len_cached, device=device, dtype=torch.int64).type_as(self.inv_freq)
+        t = t / self.scaling_factor
+        freqs = torch.outer(t, self.inv_freq)
+        # Different from paper, but it uses a different permutation in order to obtain the same calculation
+        emb = torch.cat((freqs, freqs), dim=-1)
+        self.register_buffer("_cos_cached", emb.cos().to(torch.get_default_dtype()), persistent=False)
+        self.register_buffer("_sin_cached", emb.sin().to(torch.get_default_dtype()), persistent=False)
 
-# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenAttention with Musicgen->ParlerTTS
+    @torch.no_grad()
+    def forward(self, x, position_ids):
+        # x: [bs, num_attention_heads, seq_len, head_size]
+        inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1)
+        position_ids_expanded = position_ids[:, None, :].float()
+        # Force float32 since bfloat16 loses precision on long contexts
+        # See https://github.com/huggingface/transformers/pull/29285
+        device_type = x.device.type
+        device_type = device_type if isinstance(device_type, str) and device_type != "mps" else "cpu"
+        with torch.autocast(device_type=device_type, enabled=False):
+            freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
+            emb = torch.cat((freqs, freqs), dim=-1)
+            cos = emb.cos()
+            sin = emb.sin()
+        return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
+
+def rotate_half(x):
+    """Rotates half the hidden dims of the input."""
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2 :]
+    return torch.cat((-x2, x1), dim=-1)
+
+
+def apply_rotary_pos_emb(q, k, cos, sin, is_cross_attention, unsqueeze_dim=1):
+    """Applies Rotary Position Embedding to the query and key tensors.
+
+    Args:
+        q (`torch.Tensor`): The query tensor.
+        k (`torch.Tensor`): The key tensor.
+        cos (`torch.Tensor`): The cosine part of the rotary embedding.
+        sin (`torch.Tensor`): The sine part of the rotary embedding.
+        is_cross_attention (`bool`):
+            Whether this is a cross-attention layer. If so, we don't apply ROPE to the key-states, since we assume
+            the encoder hidden-states have been computed with suitable positional encoding. Adding ROPE on-top of
+            such embeddings is hypothesised to disrupt the original positional encodings.
+        unsqueeze_dim (`int`, *optional*, defaults to 1):
+            The 'unsqueeze_dim' argument specifies the dimension along which to unsqueeze cos[position_ids] and
+            sin[position_ids] so that they can be properly broadcasted to the dimensions of q and k. For example, note
+            that cos[position_ids] and sin[position_ids] have the shape [batch_size, seq_len, head_dim]. Then, if q and
+            k have the shape [batch_size, heads, seq_len, head_dim], then setting unsqueeze_dim=1 makes
+            cos[position_ids] and sin[position_ids] broadcastable to the shapes of q and k. Similarly, if q and k have
+            the shape [batch_size, seq_len, heads, head_dim], then set unsqueeze_dim=2.
+    Returns:
+        `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
+    """
+    cos = cos.unsqueeze(unsqueeze_dim)
+    sin = sin.unsqueeze(unsqueeze_dim)
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin) if not is_cross_attention else k
+    return q_embed, k_embed
+
 class ParlerTTSAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
@@ -235,7 +304,7 @@ class ParlerTTSAttention(nn.Module):
         is_decoder: bool = False,
         bias: bool = True,
         is_causal: bool = False,
-        config: Optional[ParlerTTSConfig] = None,
+        config: Optional[ParlerTTSDecoderConfig] = None,
     ):
         super().__init__()
         self.embed_dim = embed_dim
@@ -258,6 +327,13 @@ class ParlerTTSAttention(nn.Module):
         self.q_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
         self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
 
+        if config.rope_embeddings:
+            self.rotary_emb = ParlerTTSRotaryEmbedding(
+                self.head_dim,
+                max_position_embeddings=config.max_position_embeddings,
+                base=config.rope_theta,
+            )
+
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
         return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
 
@@ -267,6 +343,7 @@ class ParlerTTSAttention(nn.Module):
         key_value_states: Optional[torch.Tensor] = None,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
         layer_head_mask: Optional[torch.Tensor] = None,
         output_attentions: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
@@ -317,8 +394,13 @@ class ParlerTTSAttention(nn.Module):
             # if encoder bi-directional self-attention `past_key_value` is always `None`
             past_key_value = (key_states, value_states)
 
+        query_states = self._shape(query_states, tgt_len, bsz)
+        if self.config.rope_embeddings:
+            cos, sin = self.rotary_emb(value_states, position_ids)
+            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, is_cross_attention)
+
         proj_shape = (bsz * self.num_heads, -1, self.head_dim)
-        query_states = self._shape(query_states, tgt_len, bsz).view(*proj_shape)
+        query_states = query_states.reshape(*proj_shape)
         key_states = key_states.reshape(*proj_shape)
         value_states = value_states.reshape(*proj_shape)
 
@@ -382,7 +464,6 @@ class ParlerTTSAttention(nn.Module):
         return attn_output, attn_weights_reshaped, past_key_value
 
 
-# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenDecoderLayer with Musicgen->ParlerTTS
 class ParlerTTSDecoderLayer(nn.Module):
     def __init__(self, config: ParlerTTSDecoderConfig):
         super().__init__()
@@ -394,6 +475,7 @@ class ParlerTTSDecoderLayer(nn.Module):
             dropout=config.attention_dropout,
             is_decoder=True,
             bias=False,
+            config=config,
         )
         self.dropout = config.dropout
         self.activation_fn = ACT2FN[config.activation_function]
@@ -406,6 +488,7 @@ class ParlerTTSDecoderLayer(nn.Module):
             dropout=config.attention_dropout,
             is_decoder=True,
             bias=False,
+            config=config,
         )
         self.encoder_attn_layer_norm = nn.LayerNorm(self.embed_dim)
         self.fc1 = nn.Linear(self.embed_dim, config.ffn_dim, bias=False)
@@ -416,6 +499,7 @@ class ParlerTTSDecoderLayer(nn.Module):
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
         encoder_hidden_states: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
         layer_head_mask: Optional[torch.Tensor] = None,
@@ -429,6 +513,9 @@ class ParlerTTSDecoderLayer(nn.Module):
             hidden_states (`torch.FloatTensor`): input to the layer of shape `(batch, seq_len, embed_dim)`
             attention_mask (`torch.FloatTensor`): attention mask of size
                 `(batch, 1, tgt_len, src_len)` where padding elements are indicated by very large negative values.
+            position_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
+                Indices of positions of each input sequence tokens in the position embeddings. Selected in the range `[0,
+                config.n_positions - 1]`.
             encoder_hidden_states (`torch.FloatTensor`):
                 cross attention input to the layer of shape `(batch, seq_len, embed_dim)`
             encoder_attention_mask (`torch.FloatTensor`): encoder attention mask of size
@@ -453,6 +540,7 @@ class ParlerTTSDecoderLayer(nn.Module):
             hidden_states=hidden_states,
             past_key_value=self_attn_past_key_value,
             attention_mask=attention_mask,
+            position_ids=position_ids,
             layer_head_mask=layer_head_mask,
             output_attentions=output_attentions,
         )
@@ -472,6 +560,7 @@ class ParlerTTSDecoderLayer(nn.Module):
                 hidden_states=hidden_states,
                 key_value_states=encoder_hidden_states,
                 attention_mask=encoder_attention_mask,
+                position_ids=position_ids,
                 layer_head_mask=cross_attn_layer_head_mask,
                 past_key_value=cross_attn_past_key_value,
                 output_attentions=output_attentions,
@@ -751,7 +840,6 @@ MUSICGEN_DECODER_INPUTS_DOCSTRING = r"""
 """
 
 
-# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenDecoder with Musicgen->ParlerTTS
 class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
     """
     Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`ParlerTTSDecoderLayer`]
@@ -772,10 +860,11 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
             [nn.Embedding(embed_dim, config.hidden_size) for _ in range(config.num_codebooks)]
         )
 
-        self.embed_positions = ParlerTTSSinusoidalPositionalEmbedding(
-            config.max_position_embeddings,
-            config.hidden_size,
-        )
+        if not config.rope_embeddings:
+            self.embed_positions = ParlerTTSSinusoidalPositionalEmbedding(
+                config.max_position_embeddings,
+                config.hidden_size,
+            )
 
         self.layers = nn.ModuleList([ParlerTTSDecoderLayer(config) for _ in range(config.num_hidden_layers)])
         self.layer_norm = nn.LayerNorm(config.hidden_size)
@@ -803,6 +892,7 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
         cross_attn_head_mask: Optional[torch.Tensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
@@ -878,12 +968,21 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                 encoder_attention_mask, inputs_embeds.dtype, tgt_len=input_shape[-1]
             )
 
-        # embed positions
-        # TODO: As it is, the masked ids from the prompt will still count in the positions embeddings
-        # maybe should modify position embeddings
-        positions = self.embed_positions(inputs_embeds, past_key_values_length)
-
-        hidden_states = inputs_embeds + positions.to(inputs_embeds.device)
+        if not self.config.rope_embeddings:
+            # embed positions
+            # TODO: As it is, the masked ids from the prompt will still count in the positions embeddings
+            # maybe should modify position embeddings
+            positions = self.embed_positions(inputs_embeds, past_key_values_length)
+            hidden_states = inputs_embeds + positions.to(inputs_embeds.device)
+        else:
+            hidden_states = inputs_embeds
+            if position_ids is None:
+                device = input_ids.device if input_ids is not None else inputs_embeds.device
+                position_ids = torch.arange(
+                    past_key_values_length, inputs_embeds.shape[1] + past_key_values_length, dtype=torch.long,
+                    device=device
+                )
+                position_ids = position_ids.unsqueeze(0)
 
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
 
@@ -923,6 +1022,7 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                     decoder_layer.forward,
                     hidden_states,
                     attention_mask,
+                    position_ids,
                     encoder_hidden_states,
                     encoder_attention_mask,
                     head_mask[idx] if head_mask is not None else None,
@@ -935,6 +1035,7 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                 layer_outputs = decoder_layer(
                     hidden_states,
                     attention_mask=attention_mask,
+                    position_ids=position_ids,
                     encoder_hidden_states=encoder_hidden_states,
                     encoder_attention_mask=encoder_attention_mask,
                     layer_head_mask=(head_mask[idx] if head_mask is not None else None),
@@ -1004,6 +1105,7 @@ class ParlerTTSModel(ParlerTTSPreTrainedModel):
         self,
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
         encoder_hidden_states: Optional[torch.FloatTensor] = None,
         encoder_attention_mask: Optional[torch.LongTensor] = None,
         prompt_hidden_states: Optional[torch.FloatTensor] = None,
@@ -1028,6 +1130,7 @@ class ParlerTTSModel(ParlerTTSPreTrainedModel):
         decoder_outputs = self.decoder(
             input_ids=input_ids,
             attention_mask=attention_mask,
+            position_ids=position_ids,
             encoder_attention_mask=encoder_attention_mask,
             encoder_hidden_states=encoder_hidden_states,
             prompt_hidden_states=prompt_hidden_states,
@@ -1058,7 +1161,6 @@ class ParlerTTSModel(ParlerTTSPreTrainedModel):
     "The Parler-TTS decoder model with a language modelling head on top.",
     MUSICGEN_START_DOCSTRING,
 )
-# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenForCausalLM with Musicgen->ParlerTTS
 class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
     def __init__(self, config: ParlerTTSDecoderConfig):
         super().__init__(config)
@@ -1097,6 +1199,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
         self,
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
         encoder_hidden_states: Optional[torch.FloatTensor] = None,
         encoder_attention_mask: Optional[torch.LongTensor] = None,
         prompt_hidden_states: Optional[torch.FloatTensor] = None,
@@ -1124,6 +1227,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
         outputs = self.model(
             input_ids,
             attention_mask=attention_mask,
+            position_ids=position_ids,
             encoder_hidden_states=encoder_hidden_states,
             encoder_attention_mask=encoder_attention_mask,
             prompt_hidden_states=prompt_hidden_states,
@@ -1228,8 +1332,16 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
                     [prompt_attention_mask, torch.zeros_like(prompt_attention_mask)], dim=0
                 )
 
+        position_ids = kwargs.get("position_ids", None)
+        if attention_mask is not None and position_ids is None:
+            # create position_ids on the fly for batch generation
+            position_ids = attention_mask.long().cumsum(-1) - 1
+            position_ids.masked_fill_(attention_mask == 0, 1)
+
         if past_key_values is not None:
             input_ids = input_ids[:, -1:]
+            if position_ids is not None:
+                position_ids = position_ids[:, -input_ids.shape[1]:]
 
             # we only want to use prompt signal in the 1st generation step but keeping the attention mask
             prompt_hidden_states = None
@@ -1237,6 +1349,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
         return {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
+            "position_ids": position_ids,
             "encoder_hidden_states": encoder_hidden_states,
             "encoder_attention_mask": encoder_attention_mask,
             "prompt_hidden_states": prompt_hidden_states,
@@ -1931,6 +2044,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         prompt_input_ids: Optional[torch.FloatTensor] = None,
         prompt_attention_mask: Optional[torch.LongTensor] = None,
         prompt_hidden_states: Optional[torch.FloatTensor] = None,
+        decoder_position_ids: Optional[torch.LongTensor] = None,
         labels: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
@@ -2041,6 +2155,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         decoder_outputs = self.decoder(
             input_ids=decoder_input_ids,
             attention_mask=decoder_attention_mask,
+            position_ids=decoder_position_ids,
             encoder_hidden_states=encoder_hidden_states,
             encoder_attention_mask=attention_mask,
             prompt_hidden_states=prompt_hidden_states,
@@ -2109,6 +2224,12 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             if prompt_attention_mask is not None:
                 prompt_attention_mask = prompt_attention_mask.repeat((2, 1))
 
+        decoder_position_ids = kwargs.get("decoder_position_ids", None)
+        if decoder_attention_mask is not None and decoder_position_ids is None:
+            # create position_ids on the fly for batch generation
+            decoder_position_ids = decoder_attention_mask.long().cumsum(-1) - 1
+            decoder_position_ids.masked_fill_(decoder_attention_mask == 0, 1)
+
         if past_key_values is not None:
             past_length = past_key_values[0][0].shape[2]
 
@@ -2121,6 +2242,9 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
 
             decoder_input_ids = decoder_input_ids[:, remove_prefix_length:]
 
+            if decoder_position_ids is not None:
+                decoder_position_ids = decoder_position_ids[:, remove_prefix_length:]
+
             # we only want to use prompt signal in the 1st generation step but keeping the attention mask
             prompt_hidden_states = None
 
@@ -2129,6 +2253,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             "encoder_outputs": encoder_outputs,
             "past_key_values": past_key_values,
             "decoder_input_ids": decoder_input_ids,
+            "decoder_position_ids": decoder_position_ids,
             "attention_mask": attention_mask,
             "decoder_attention_mask": decoder_attention_mask,
             "head_mask": head_mask,

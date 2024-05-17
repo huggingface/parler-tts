@@ -74,6 +74,10 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
             The number of parallel codebooks forwarded to the model.
         tie_word_embeddings(`bool`, *optional*, defaults to `False`):
             Whether input and output word embeddings should be tied.
+        rope_embeddings (`bool`, *optional*, defaults to `False`):
+            Whether to use ROPE or absolute positional embeddings.
+        rope_theta (`float`, *optional*, defaults to 100000.0):
+            The base period of the RoPE embeddings.
     """
 
     model_type = "parler_tts_decoder"
@@ -100,6 +104,8 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
         bos_token_id=2049,
         eos_token_id=2048,
         tie_word_embeddings=False,
+        rope_embeddings=False,
+        rope_theta=10_000.0,
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -117,6 +123,8 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
         self.use_cache = use_cache
         self.scale_embedding = scale_embedding  # scale factor will be sqrt(d_model) if True
         self.num_codebooks = num_codebooks
+        self.rope_embeddings = rope_embeddings
+        self.rope_theta = rope_theta
 
         super().__init__(
             pad_token_id=pad_token_id,
