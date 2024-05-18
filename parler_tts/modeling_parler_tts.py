@@ -929,33 +929,6 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
         if prompt_hidden_states is not None:
             inputs_embeds = torch.cat([prompt_hidden_states, inputs_embeds], dim=1)
 
-        # As it is, the masked ids from the prompt will still count in the positions embeddings
-        if prompt_attention_mask is not None and attention_mask is not None:
-            attention_mask = torch.cat([prompt_attention_mask, attention_mask], dim=1)
-        elif prompt_attention_mask is not None:
-            logger.warning_once(
-                "`prompt_attention_mask` is specified but `attention_mask` is not. A full `attention_mask` will be created. Make sure this is the intended behaviour."
-            )
-            if past_key_values is None:
-                attention_mask = torch.cat(
-                    [
-                        prompt_attention_mask,
-                        torch.ones(input_shape, device=self.device, dtype=prompt_attention_mask.dtype),
-                    ],
-                    dim=1,
-                )
-            else:
-                generated_length = past_key_values_length - prompt_attention_mask.shape[1] + 1
-                attention_mask = torch.cat(
-                    [
-                        prompt_attention_mask,
-                        torch.ones(
-                            (input_shape[0], generated_length), device=self.device, dtype=prompt_attention_mask.dtype
-                        ),
-                    ],
-                    dim=1,
-                )
-
         input_shape = inputs_embeds.size()[:-1]
 
         if not self.config.rope_embeddings:
@@ -2151,6 +2124,8 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             # concatenate text description states with prompt description states
             encoder_hidden_states = torch.cat([encoder_hidden_states, prompt_hidden_states], dim=1)
             if prompt_attention_mask is not None:
+                if attention_mask is None:
+                    attention_mask = torch.ones(encoder_hidden_states.shape[:2], device=self.device, dtype=prompt_attention_mask.dtype)
                 attention_mask = torch.cat([attention_mask, prompt_attention_mask], dim=1)
 
             prompt_hidden_states = None
@@ -2267,10 +2242,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             decoder_input_ids = decoder_input_ids[:, remove_prefix_length:]
 
             # we only want to use prompt signal in the 1st generation step but keeping the attention mask
-            prompt_hidden_states = None
-
-            if self.config.prompt_cross_attention:
-                prompt_attention_mask = None
+            prompt_hidden_states = prompt_hidden_states if self.config.prompt_cross_attention else None
 
         return {
             "input_ids": None,  # encoder_outputs is defined. input_ids not needed
