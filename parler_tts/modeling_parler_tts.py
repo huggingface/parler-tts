@@ -929,6 +929,33 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
         if prompt_hidden_states is not None:
             inputs_embeds = torch.cat([prompt_hidden_states, inputs_embeds], dim=1)
 
+        # As it is, the masked ids from the prompt will still count in the positions embeddings
+        if prompt_attention_mask is not None and attention_mask is not None:
+            attention_mask = torch.cat([prompt_attention_mask, attention_mask], dim=1)
+        elif prompt_attention_mask is not None:
+            logger.warning_once(
+                "`prompt_attention_mask` is specified but `attention_mask` is not. A full `attention_mask` will be created. Make sure this is the intended behaviour."
+            )
+            if past_key_values is None:
+                attention_mask = torch.cat(
+                    [
+                        prompt_attention_mask,
+                        torch.ones(input_shape, device=self.device, dtype=prompt_attention_mask.dtype),
+                    ],
+                    dim=1,
+                )
+            else:
+                generated_length = past_key_values_length - prompt_attention_mask.shape[1] + 1
+                attention_mask = torch.cat(
+                    [
+                        prompt_attention_mask,
+                        torch.ones(
+                            (input_shape[0], generated_length), device=self.device, dtype=prompt_attention_mask.dtype
+                        ),
+                    ],
+                    dim=1,
+                )
+
         input_shape = inputs_embeds.size()[:-1]
 
         if not self.config.rope_embeddings:
