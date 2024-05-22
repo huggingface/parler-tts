@@ -126,7 +126,7 @@ def main():
             "adam_beta2": training_args.adam_beta2,
             "temperature": model_args.temperature,
         },
-        init_kwargs={"wandb": {"name": data_args.wandb_run_name}} if data_args.wandb_run_name else None,
+        init_kwargs={"wandb": {"name": data_args.wandb_run_name}} if data_args.wandb_run_name else {},
     )
 
     # Detecting last checkpoint and eventually continue from last checkpoint
@@ -750,6 +750,10 @@ def main():
         "do_sample": model_args.do_sample,
         "temperature": model_args.temperature,
         "max_length": model_args.max_length,
+        # Because of the delayed pattern mask, generation might stop earlier because of unexpected behaviour
+        # on the first tokens of the codebooks that are delayed.
+        # This fix the issue.
+        "min_new_tokens": num_codebooks + 1,
     }
 
     # Define gradient update step fn
