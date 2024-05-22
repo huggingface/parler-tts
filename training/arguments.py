@@ -218,7 +218,7 @@ class DataTrainingArguments:
         metadata={
             "help": (
                 "If set, filter samples with descriptions that are longer than `max_description_token_length` tokens."
-                "Also, used to set maximum desription token length if `pad_to_max_length=True`."
+                "Also, used to set maximum description token length if `pad_to_max_length=True`."
             )
         },
     )
@@ -276,6 +276,12 @@ class DataTrainingArguments:
     wandb_project: str = field(
         default="parler-speech",
         metadata={"help": "The name of the wandb project."},
+    )
+    wandb_run_name: str = field(
+        default=None,
+        metadata={
+            "help": "If specified, the name of the run. If not specified, wandb will give a random name to this run."
+        },
     )
     save_to_disk: str = field(
         default=None,

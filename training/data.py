@@ -31,7 +31,7 @@ class DataCollatorEncodecWithPadding:
         audios = [feature[self.audio_column_name]["array"] for feature in features]
         len_audio = [len(audio) for audio in audios]
 
-        # since resampling has already been performed in the 'load_multiple_datasets' function, 
+        # since resampling has already been performed in the 'load_multiple_datasets' function,
         # a fixed sampling_rate(44100hz) is passed to the feature_extractor.
         sampling_rate = self.feature_extractor.sampling_rate
         batch = self.feature_extractor(
