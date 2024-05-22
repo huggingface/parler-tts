@@ -29,8 +29,10 @@ def wer(asr_model_name_or_path, prompts, audios, device, per_device_eval_batch_s
         batch_size=int(per_device_eval_batch_size),
     )
 
-    word_error = 100 * metric.compute(
-        predictions=[t["text"].lower() for t in transcriptions], references=[t.lower() for t in prompts]
-    )
+    normalizer = asr_pipeline.tokenizer.normalize
+    normalized_predictions = [normalizer(t["text"]) for t in transcriptions]
+    normalized_references = [normalizer(t) for t in prompts]
+
+    word_error = 100 * metric.compute(predictions=normalized_predictions, references=normalized_references)
 
     return word_error, [t["text"] for t in transcriptions]
