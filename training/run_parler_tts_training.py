@@ -98,9 +98,6 @@ def main():
 
     ####### A. Preparation
     kwargs_handlers = [InitProcessGroupKwargs(timeout=timedelta(minutes=60))]
-    if training_args.torch_compile:
-        # TODO(YL): add more compile modes?
-        kwargs_handlers.append(TorchDynamoPlugin(backend="inductor", mode="default"))  # reduce-overhead
 
     accelerator = Accelerator(
         gradient_accumulation_steps=training_args.gradient_accumulation_steps,
@@ -129,6 +126,7 @@ def main():
             "adam_beta2": training_args.adam_beta2,
             "temperature": model_args.temperature,
         },
+        init_kwargs={"wandb": {"name": data_args.wandb_run_name}} if data_args.wandb_run_name else None,
     )
 
     # Detecting last checkpoint and eventually continue from last checkpoint
@@ -538,7 +536,7 @@ def main():
         logger.info(f"Dataset saved at {data_args.save_to_disk}")
 
     audio_max_length = None
-    if training_args.torch_compile:
+    if padding == "max_length":
         audio_max_length = max(vectorized_datasets["train"]["target_length"])
         with accelerator.main_process_first():
             max_sample = vectorized_datasets["train"].filter(
@@ -547,6 +545,18 @@ def main():
                 input_columns=["target_length"],
             )
         audio_max_length = torch.tensor(max_sample[0]["labels"]).shape[1]
+
+    if training_args.group_by_length:
+        # apply a simple heuristic to take into account audio and text lengths
+        def add_target_lengths(target_length, prompt, description):
+            return {"target_length": target_length + len(prompt) + len(description)}
+
+        with accelerator.main_process_first():
+            vectorized_datasets = vectorized_datasets.map(
+                add_target_lengths,
+                num_proc=num_workers,
+                input_columns=["target_length", "prompt_input_ids", "input_ids"],
+            )
 
     # for large datasets it is advised to run the preprocessing on a
     # single machine first with ``args.preprocessing_only`` since there will mostly likely
