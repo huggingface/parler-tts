@@ -21,7 +21,7 @@ def clap_similarity(clap_model_name_or_path, texts, audios, device):
     return cosine_sim.mean().to("cpu")
 
 
-def wer(asr_model_name_or_path, prompts, audios, device, per_device_eval_batch_size, sampling_rate):
+def wer(asr_model_name_or_path, prompts, audios, device, per_device_eval_batch_size, sampling_rate, normalizer):
     metric = evaluate.load("wer")
     asr_pipeline = pipeline(model=asr_model_name_or_path, device=device)
     transcriptions = asr_pipeline(
@@ -29,8 +29,9 @@ def wer(asr_model_name_or_path, prompts, audios, device, per_device_eval_batch_s
         batch_size=int(per_device_eval_batch_size),
     )
 
-    word_error = 100 * metric.compute(
-        predictions=[t["text"].lower() for t in transcriptions], references=[t.lower() for t in prompts]
-    )
+    predictions = [normalizer(t["text"]) for t in transcriptions]
+    references = [normalizer(t) for t in prompts]
+
+    word_error = 100 * metric.compute(predictions=predictions, references=references)
 
     return word_error, [t["text"] for t in transcriptions]

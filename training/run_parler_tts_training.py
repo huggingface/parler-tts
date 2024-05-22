@@ -23,6 +23,7 @@ import sys
 import time
 from multiprocess import set_start_method
 from datetime import timedelta
+import json
 
 from tqdm import tqdm
 from pathlib import Path
@@ -33,14 +34,14 @@ from torch.utils.data import DataLoader
 import datasets
 from datasets import DatasetDict, Dataset, IterableDataset, concatenate_datasets
 
-from huggingface_hub import HfApi
+from huggingface_hub import HfApi, hf_hub_download
 
 import transformers
 from transformers import AutoFeatureExtractor, AutoTokenizer, HfArgumentParser
 from transformers.trainer_pt_utils import LengthGroupedSampler
 from transformers.optimization import get_scheduler
 from transformers.utils import send_example_telemetry
-
+from transformers.models.whisper.english_normalizer import BasicTextNormalizer, EnglishTextNormalizer
 
 from accelerate import Accelerator
 from accelerate.utils import set_seed, AutocastKwargs, InitProcessGroupKwargs, TorchDynamoPlugin
@@ -563,7 +564,22 @@ def main():
 
     # 6. Next, we can prepare the training.
 
-    # Let's use word CLAP similary and WER metrics as our evaluation metrics,
+    # first load a normalizer
+    if data_args.use_english_normalizer:
+        # for English, we use an English spelling normalizer
+        english_spelling_normalizer_file = hf_hub_download(
+            repo_id="openai/whisper-large-v3", filename="normalizer.json"
+        )
+        with open(english_spelling_normalizer_file, encoding="utf-8") as vocab_handle:
+            english_spelling_normalizer = json.load(vocab_handle)
+
+    normalizer = (
+        EnglishTextNormalizer(english_spelling_normalizer)
+        if data_args.use_english_normalizer
+        else BasicTextNormalizer()
+    )
+
+    # Let's use word CLAP similary and WER metrics as our evaluation metrics
     def compute_metrics(audios, descriptions, prompts, device="cpu"):
         results = {}
         input_ids = descriptions
@@ -581,6 +597,7 @@ def main():
             device,
             training_args.per_device_eval_batch_size,
             sampling_rate,
+            normalizer,
         )
         results["wer"] = word_error
 

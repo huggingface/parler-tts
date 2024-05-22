@@ -288,6 +288,14 @@ class DataTrainingArguments:
         default=2,
         metadata={"help": ("Pad to multiple of for tokenizers.")},
     )
+    use_english_normalizer: bool = field(
+        default=True,
+        metadata={
+            "help": (
+                "Whether or not to use an English normalizer for WER evaluation. If `False`, use basic normalizer (BasicTextNormalizer)."
+            )
+        },
+    )
 
 
 @dataclass
