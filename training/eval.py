@@ -52,7 +52,7 @@ def wer(asr_model_name_or_path, prompts, audios, device, per_device_eval_batch_s
         if len(norm_ref) > 0:
             norm_pred = normalizer(pred["text"])
             normalized_predictions.append(norm_pred)
-            normalized_references.append(norm_pred)
+            normalized_references.append(norm_ref)
 
     word_error = 100 * metric.compute(predictions=normalized_predictions, references=normalized_references)
 
