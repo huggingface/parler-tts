@@ -47,6 +47,14 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
             Number of decoder layers.
         num_attention_heads (`int`, *optional*, defaults to 16):
             Number of attention heads for each attention layer in the Transformer block.
+        num_key_value_heads (`int`, *optional*):
+            This is the number of key_value heads that should be used to implement Grouped Query Attention. If
+            `num_key_value_heads=num_attention_heads`, the model will use Multi Head Attention (MHA), if
+            `num_key_value_heads=1 the model will use Multi Query Attention (MQA) otherwise GQA is used. When
+            converting a multi-head checkpoint to a GQA checkpoint, each group key and value head should be constructed
+            by meanpooling all the original heads within that group. For more details checkout [this
+            paper](https://arxiv.org/pdf/2305.13245.pdf). If it is not specified, will default to
+            `num_attention_heads`.
         ffn_dim (`int`, *optional*, defaults to 4096):
             Dimensionality of the "intermediate" (often named feed-forward) layer in the Transformer block.
         activation_function (`str` or `function`, *optional*, defaults to `"gelu"`):
@@ -86,6 +94,7 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
         num_hidden_layers=24,
         ffn_dim=4096,
         num_attention_heads=16,
+        num_key_value_heads=None,
         layerdrop=0.0,
         use_cache=True,
         activation_function="gelu",
@@ -108,6 +117,10 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
         self.ffn_dim = ffn_dim
         self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
+        if num_key_value_heads is None:
+            num_key_value_heads = num_attention_heads
+
+        self.num_key_value_heads = num_key_value_heads
         self.dropout = dropout
         self.attention_dropout = attention_dropout
         self.activation_dropout = activation_dropout

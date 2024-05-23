@@ -138,6 +138,18 @@ def build_delay_pattern_mask(
     input_ids = input_ids[..., :first_start_id].reshape(bsz * num_codebooks, -1)
     return input_ids, pattern_mask
 
+# Copied from transformers.models.llama.modeling_llama.repeat_kv
+def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
+    """
+    This is the equivalent of torch.repeat_interleave(x, dim=1, repeats=n_rep). The hidden states go from (batch,
+    num_key_value_heads, seqlen, head_dim) to (batch, num_attention_heads, seqlen, head_dim)
+    """
+    batch, num_key_value_heads, slen, head_dim = hidden_states.shape
+    if n_rep == 1:
+        return hidden_states
+    hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_key_value_heads, n_rep, slen, head_dim)
+    return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
+
 
 @dataclass
 class ParlerTTSUnconditionalInput(ModelOutput):
@@ -223,14 +235,14 @@ class ParlerTTSSinusoidalPositionalEmbedding(nn.Module):
         return self.weights.index_select(0, position_ids.view(-1)).detach()
 
 
-# Copied from transformers.models.musicgen.modeling_musicgen.MusicgenAttention with Musicgen->ParlerTTS
 class ParlerTTSAttention(nn.Module):
-    """Multi-headed attention from 'Attention Is All You Need' paper"""
+    """Multi-headed attention from 'Attention Is All You Need' paper. Modified to use GQA and MQA."""
 
     def __init__(
         self,
         embed_dim: int,
         num_heads: int,
+        num_key_value_heads: int,
         dropout: float = 0.0,
         is_decoder: bool = False,
         bias: bool = True,
@@ -242,6 +254,8 @@ class ParlerTTSAttention(nn.Module):
         self.num_heads = num_heads
         self.dropout = dropout
         self.head_dim = embed_dim // num_heads
+        self.num_key_value_heads = num_key_value_heads
+        self.num_key_value_groups = self.num_heads // self.num_key_value_heads
         self.config = config
 
         if (self.head_dim * num_heads) != self.embed_dim:
@@ -253,13 +267,16 @@ class ParlerTTSAttention(nn.Module):
         self.is_decoder = is_decoder
         self.is_causal = is_causal
 
-        self.k_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
-        self.v_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.k_proj = nn.Linear(embed_dim, self.num_key_value_heads * self.head_dim, bias=bias)
+        self.v_proj = nn.Linear(embed_dim, self.num_key_value_heads * self.head_dim, bias=bias)
         self.q_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
         self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
 
-    def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
+    def _shape_query(self, tensor: torch.Tensor, seq_len: int, bsz: int):
         return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
+
+    def _shape_key_value(self, tensor: torch.Tensor, seq_len: int, bsz: int):
+        return tensor.view(bsz, seq_len, self.num_key_value_heads, self.head_dim).transpose(1, 2).contiguous()
 
     def forward(
         self,
@@ -294,18 +311,18 @@ class ParlerTTSAttention(nn.Module):
             value_states = past_key_value[1]
         elif is_cross_attention:
             # cross_attentions
-            key_states = self._shape(self.k_proj(key_value_states), -1, bsz)
-            value_states = self._shape(self.v_proj(key_value_states), -1, bsz)
+            key_states = self._shape_key_value(self.k_proj(key_value_states), -1, bsz)
+            value_states = self._shape_key_value(self.v_proj(key_value_states), -1, bsz)
         elif past_key_value is not None:
             # reuse k, v, self_attention
-            key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
-            value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
+            key_states = self._shape_key_value(self.k_proj(hidden_states), -1, bsz)
+            value_states = self._shape_key_value(self.v_proj(hidden_states), -1, bsz)
             key_states = torch.cat([past_key_value[0], key_states], dim=2)
             value_states = torch.cat([past_key_value[1], value_states], dim=2)
         else:
             # self_attention
-            key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
-            value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
+            key_states = self._shape_key_value(self.k_proj(hidden_states), -1, bsz)
+            value_states = self._shape_key_value(self.v_proj(hidden_states), -1, bsz)
 
         if self.is_decoder:
             # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
@@ -316,9 +333,13 @@ class ParlerTTSAttention(nn.Module):
             # can concat previous decoder key/value_states to current projected key/value_states (third "elif" case)
             # if encoder bi-directional self-attention `past_key_value` is always `None`
             past_key_value = (key_states, value_states)
+            
+        # repeat k/v heads if n_kv_heads < n_heads
+        key_states = repeat_kv(key_states, self.num_key_value_groups)
+        value_states = repeat_kv(value_states, self.num_key_value_groups)
 
         proj_shape = (bsz * self.num_heads, -1, self.head_dim)
-        query_states = self._shape(query_states, tgt_len, bsz).view(*proj_shape)
+        query_states = self._shape_query(query_states, tgt_len, bsz).view(*proj_shape)
         key_states = key_states.reshape(*proj_shape)
         value_states = value_states.reshape(*proj_shape)
 
@@ -391,6 +412,7 @@ class ParlerTTSDecoderLayer(nn.Module):
         self.self_attn = ParlerTTSAttention(
             embed_dim=self.embed_dim,
             num_heads=config.num_attention_heads,
+            num_key_value_heads=config.num_key_value_heads,
             dropout=config.attention_dropout,
             is_decoder=True,
             bias=False,
@@ -403,6 +425,7 @@ class ParlerTTSDecoderLayer(nn.Module):
         self.encoder_attn = ParlerTTSAttention(
             self.embed_dim,
             config.num_attention_heads,
+            num_key_value_heads=config.num_key_value_heads,
             dropout=config.attention_dropout,
             is_decoder=True,
             bias=False,
