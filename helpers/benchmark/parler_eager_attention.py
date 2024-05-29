@@ -7,7 +7,7 @@ import time
 
 model = ParlerTTSForConditionalGeneration.from_pretrained(
     "parler-tts/parler-tts-mini-expresso",
-    attn_implementation="flash_attention_2",
+    attn_implementation="eager",
     torch_dtype=torch.float16
 ).to("cuda:0")
 
