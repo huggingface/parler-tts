@@ -47,7 +47,7 @@ def wer(asr_model_name_or_path, prompts, audios, device, per_device_eval_batch_s
     normalized_references = []
 
     for pred, ref in zip(transcriptions, prompts):
-        normalizer = english_normalizer if hasattr(pred, "language") and pred["language"] == "english" else basic_normalizer
+        normalizer = english_normalizer if return_language and pred["chunks"][0]["language"] == "english" else basic_normalizer
         norm_ref = normalizer(ref)
         if len(norm_ref) > 0:
             norm_pred = normalizer(pred["text"])
