@@ -30,6 +30,8 @@ class DataCollatorEncodecWithPadding:
         # different padding methods
         audios = [feature[self.audio_column_name]["array"] for feature in features]
         len_audio = [len(audio) for audio in audios]
+        if self.max_length is not None:
+            audios = [audio[:min(l, self.max_length)] for audio, l in zip(audios, len_audio)]
 
         # since resampling has already been performed in the 'load_multiple_datasets' function,
         # a fixed sampling_rate(44100hz) is passed to the feature_extractor.
@@ -81,7 +83,7 @@ class DataCollatorParlerTTSWithPadding:
         # (bsz, seq_len, num_codebooks)
         labels = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=-100)
         if self.audio_max_length is not None and self.padding == "max_length":
-            labels = torch.nn.functional.pad(labels, pad=(0, 0, 0, max(self.audio_max_length - labels.shape[1], 0)))
+            labels = torch.nn.functional.pad(labels, pad=(0, 0, 0, max(self.audio_max_length - labels.shape[1], 0)), value=-100)
 
         input_ids = [{"input_ids": feature["input_ids"]} for feature in features]
 
@@ -206,7 +208,7 @@ def load_multiple_datasets(
     all_datasets = []
     # iterate over the datasets we want to interleave
     for dataset_dict in tqdm(dataset_names_dict, desc="Combining datasets..."):
-        with accelerator.main_process_first():
+        with accelerator.local_main_process_first():
             dataset = load_dataset(
                 dataset_dict["name"],
                 dataset_dict["config"],
@@ -304,7 +306,7 @@ def load_multiple_datasets(
             seed=seed,
         )
     else:
-        with accelerator.main_process_first():
+        with accelerator.local_main_process_first():
             interleaved_dataset = concatenate_datasets(all_datasets)
 
     return interleaved_dataset
