@@ -680,6 +680,8 @@ def main():
         checkpoint = last_checkpoint
 
     if accelerator.is_main_process:
+        if training_args.output_dir is not None:
+            os.makedirs(training_args.output_dir, exist_ok=True)
         if training_args.push_to_hub:
             api = HfApi(token=training_args.hub_token)
 
@@ -692,8 +694,6 @@ def main():
             with open(os.path.join(training_args.output_dir, ".gitignore"), "w+") as gitignore:
                 if "wandb" not in gitignore:
                     gitignore.write("wandb\n")
-        elif training_args.output_dir is not None:
-            os.makedirs(training_args.output_dir, exist_ok=True)
     accelerator.wait_for_everyone()
 
     # Now save everything to be able to create a single processor later
@@ -755,6 +755,9 @@ def main():
         # This fix the issue.
         "min_new_tokens": num_codebooks + 1,
     }
+    generation_config = model.generation_config
+    for key in gen_kwargs:
+        generation_config.key = gen_kwargs[key]
 
     # Define gradient update step fn
     def train_step(
@@ -883,9 +886,11 @@ def main():
                     # safe_serialization=False to avoid shared tensors saving issue (TODO(YL): it's a temporary fix)
                     # https://github.com/huggingface/transformers/issues/27293#issuecomment-1872560074
                     accelerator.save_state(output_dir=intermediate_dir, safe_serialization=False)
+                    config.save_pretrained(intermediate_dir)
+                    generation_config.save_pretrained(intermediate_dir)
                     accelerator.wait_for_everyone()
                     if accelerator.is_main_process:
-                        rotate_checkpoints(
+                        checkpoints_to_be_deleted = rotate_checkpoints(
                             training_args.save_total_limit, output_dir=training_args.output_dir, logger=logger
                         )
 
@@ -900,6 +905,7 @@ def main():
                                 folder_path=training_args.output_dir,
                                 commit_message=f"Saving train state of step {cur_step}",
                                 run_as_future=True,
+                                delete_patterns=checkpoints_to_be_deleted,
                             )
 
                 if training_args.do_eval and (cur_step % eval_steps == 0 or cur_step == total_train_steps):

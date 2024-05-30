@@ -3,7 +3,7 @@ import re
 import shutil
 from pathlib import Path
 from dataclasses import field
-from typing import Dict, List
+from typing import Dict, List, Union
 
 import torch
 from wandb import Audio
@@ -44,7 +44,7 @@ def sorted_checkpoints(output_dir=None, checkpoint_prefix="checkpoint") -> List[
     return checkpoints_sorted
 
 
-def rotate_checkpoints(save_total_limit=None, output_dir=None, checkpoint_prefix="checkpoint", logger=None) -> None:
+def rotate_checkpoints(save_total_limit=None, output_dir=None, checkpoint_prefix="checkpoint", logger=None) -> Union[List, None]:
     """Helper function to delete old checkpoints."""
     if save_total_limit is None or save_total_limit <= 0:
         return
@@ -58,6 +58,8 @@ def rotate_checkpoints(save_total_limit=None, output_dir=None, checkpoint_prefix
     for checkpoint in checkpoints_to_be_deleted:
         logger.info(f"Deleting older checkpoint [{checkpoint}] due to args.save_total_limit")
         shutil.rmtree(checkpoint, ignore_errors=True)
+    checkpoints_to_be_deleted = [f"*{Path(checkpoint).absolute().name}*"  for checkpoint in checkpoints_to_be_deleted]
+    return checkpoints_to_be_deleted
 
 
 def log_metric(
