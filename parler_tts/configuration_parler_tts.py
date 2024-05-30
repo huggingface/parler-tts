@@ -82,6 +82,10 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
             The number of parallel codebooks forwarded to the model.
         tie_word_embeddings(`bool`, *optional*, defaults to `False`):
             Whether input and output word embeddings should be tied.
+        rope_embeddings (`bool`, *optional*, defaults to `False`):
+            Whether to use ROPE or absolute positional embeddings.
+        rope_theta (`float`, *optional*, defaults to 100000.0):
+            The base period of the RoPE embeddings.
     """
 
     model_type = "parler_tts_decoder"
@@ -109,6 +113,8 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
         bos_token_id=2049,
         eos_token_id=2048,
         tie_word_embeddings=False,
+        rope_embeddings=False,
+        rope_theta=10_000.0,
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -130,6 +136,8 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
         self.use_cache = use_cache
         self.scale_embedding = scale_embedding  # scale factor will be sqrt(d_model) if True
         self.num_codebooks = num_codebooks
+        self.rope_embeddings = rope_embeddings
+        self.rope_theta = rope_theta
 
         super().__init__(
             pad_token_id=pad_token_id,
@@ -153,6 +161,8 @@ class ParlerTTSConfig(PretrainedConfig):
         vocab_size (`int`, *optional*, defaults to 1024):
             Vocabulary size of the prompt token ids. Defines the number of different tokens that can be
             represented by the `prompt_inputs_ids`.
+        prompt_cross_attention (`bool`, *optional*, defaults to `False`):
+            Whether to use cross-attention conditioning for the prompt (as well as the description).
         kwargs (*optional*):
             Dictionary of keyword arguments. Notably:
 
@@ -203,7 +213,7 @@ class ParlerTTSConfig(PretrainedConfig):
     model_type = "parler_tts"
     is_composition = True
 
-    def __init__(self, vocab_size=1024, **kwargs):
+    def __init__(self, vocab_size=1024, prompt_cross_attention=False, **kwargs):
         super().__init__(**kwargs)
         if "text_encoder" not in kwargs or "audio_encoder" not in kwargs or "decoder" not in kwargs:
             raise ValueError("Config has to be initialized with text_encoder, audio_encoder and decoder config")
@@ -217,6 +227,7 @@ class ParlerTTSConfig(PretrainedConfig):
         decoder_config = kwargs.pop("decoder")
 
         self.vocab_size = vocab_size
+        self.prompt_cross_attention = prompt_cross_attention
         self.text_encoder = AutoConfig.for_model(text_encoder_model_type, **text_encoder_config)
         self.audio_encoder = AutoConfig.for_model(audio_encoder_model_type, **audio_encoder_config)
         self.decoder = ParlerTTSDecoderConfig(**decoder_config)
