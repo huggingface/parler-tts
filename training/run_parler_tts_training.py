@@ -97,10 +97,7 @@ def main():
     padding = "max_length" if data_args.pad_to_max_length else "longest"
 
     ####### A. Preparation
-    kwargs_handlers = [InitProcessGroupKwargs(timeout=timedelta(minutes=60))]
-    if training_args.torch_compile:
-        # TODO(YL): add more compile modes?
-        kwargs_handlers.append(TorchDynamoPlugin(backend="inductor", mode="default"))  # reduce-overhead
+    kwargs_handlers = [InitProcessGroupKwargs(timeout=timedelta(minutes=120))]
 
     accelerator = Accelerator(
         gradient_accumulation_steps=training_args.gradient_accumulation_steps,
@@ -129,6 +126,7 @@ def main():
             "adam_beta2": training_args.adam_beta2,
             "temperature": model_args.temperature,
         },
+        init_kwargs={"wandb": {"name": data_args.wandb_run_name}} if data_args.wandb_run_name else {},
     )
 
     # Detecting last checkpoint and eventually continue from last checkpoint
@@ -343,6 +341,7 @@ def main():
     model.freeze_encoders(model_args.freeze_text_encoder)
 
     # Test all gather - used for warmout and avoiding timeout
+    logger.debug(str(accelerator.process_index), main_process_only=False, in_order=True)
     test_tensor = torch.tensor([accelerator.process_index], device=accelerator.device)
     gathered_tensor = accelerator.gather(test_tensor)
     print("gathered_tensor", gathered_tensor)
@@ -351,7 +350,7 @@ def main():
     if not dataset_was_precomputed:
         # Filter on text length
         if description_column_name is not None and data_args.max_text_length is not None:
-            with accelerator.main_process_first():
+            with accelerator.local_main_process_first():
                 # filter description that is shorter than max_text_length
                 raw_datasets = raw_datasets.filter(
                     lambda x: len(x) < data_args.max_text_length,
@@ -369,7 +368,7 @@ def main():
 
             return batch
 
-        with accelerator.main_process_first():
+        with accelerator.local_main_process_first():
             # this is a trick to avoid to rewrite the entire audio column which takes ages
             vectorized_datasets = raw_datasets.map(
                 pass_through_processors,
@@ -432,7 +431,7 @@ def main():
                 generate_labels = accelerator.pad_across_processes(generate_labels, dim=1, pad_index=0)
                 generate_labels = accelerator.gather_for_metrics(generate_labels)
 
-                if accelerator.is_main_process:
+                if accelerator.is_local_main_process:
                     lab = generate_labels["labels"].cpu().transpose(1, 2).to(torch.int16)
                     rat = generate_labels["ratio"].cpu().squeeze()
                     lens = generate_labels["len_audio"].cpu().squeeze()
@@ -450,11 +449,11 @@ def main():
                     os.path.join(data_args.temporary_save_to_disk, split),
                     num_proc=1 if split == "eval" else data_args.preprocessing_num_workers,
                 )
-            accelerator.wait_for_everyone()
             del all_generated_labels
+            accelerator.wait_for_everyone()
 
             tmp_labels = datasets.load_from_disk(os.path.join(data_args.temporary_save_to_disk, split))
-            with accelerator.main_process_first():
+            with accelerator.local_main_process_first():
                 vectorized_datasets[split] = concatenate_datasets([vectorized_datasets[split], tmp_labels], axis=1)
 
             def postprocess_dataset(labels):
@@ -485,7 +484,7 @@ def main():
                 output = {"labels": labels[:, 1:]}
                 return output
 
-            with accelerator.main_process_first():
+            with accelerator.local_main_process_first():
                 vectorized_datasets[split] = vectorized_datasets[split].map(
                     postprocess_dataset,
                     num_proc=data_args.preprocessing_num_workers,  # this one is resource consuming if many processor.
@@ -496,7 +495,7 @@ def main():
         accelerator.free_memory()
         del generate_labels, all_lens
 
-        with accelerator.main_process_first():
+        with accelerator.local_main_process_first():
             # NOTE: filtering is done at the end because in the `datasets` library, caching audio files is done after most operations
             # caching audio files is time and disk-space consuming, so we want to avoid it at all costs, especially for large (>1Kh) audio datasets.
             # That's also why we avoid to concat the processed datasets (vectorized_datasets) with the audio column present in raw_datasets.
@@ -512,7 +511,7 @@ def main():
             )
 
             if description_column_name is not None and data_args.max_description_token_length is not None:
-                with accelerator.main_process_first():
+                with accelerator.local_main_process_first():
                     # filter description that is shorter than max_text_length
                     vectorized_datasets = vectorized_datasets.filter(
                         lambda x: len(x) < data_args.max_description_token_length,
@@ -521,7 +520,7 @@ def main():
                     )
 
             if data_args.max_prompt_token_length is not None:
-                with accelerator.main_process_first():
+                with accelerator.local_main_process_first():
                     # filter description that is shorter than max_text_length
                     vectorized_datasets = vectorized_datasets.filter(
                         lambda x: len(x) < data_args.max_prompt_token_length,
@@ -538,15 +537,27 @@ def main():
         logger.info(f"Dataset saved at {data_args.save_to_disk}")
 
     audio_max_length = None
-    if training_args.torch_compile:
+    if padding == "max_length":
         audio_max_length = max(vectorized_datasets["train"]["target_length"])
-        with accelerator.main_process_first():
+        with accelerator.local_main_process_first():
             max_sample = vectorized_datasets["train"].filter(
                 lambda x: x == audio_max_length,
                 num_proc=num_workers,
                 input_columns=["target_length"],
             )
         audio_max_length = torch.tensor(max_sample[0]["labels"]).shape[1]
+
+    if training_args.group_by_length:
+        # apply a simple heuristic to take into account audio and text lengths
+        def add_target_lengths(target_length, prompt, description):
+            return {"target_length": target_length + len(prompt) + len(description)}
+
+        with accelerator.local_main_process_first():
+            vectorized_datasets = vectorized_datasets.map(
+                add_target_lengths,
+                num_proc=num_workers,
+                input_columns=["target_length", "prompt_input_ids", "input_ids"],
+            )
 
     # for large datasets it is advised to run the preprocessing on a
     # single machine first with ``args.preprocessing_only`` since there will mostly likely
@@ -740,6 +751,10 @@ def main():
         "do_sample": model_args.do_sample,
         "temperature": model_args.temperature,
         "max_length": model_args.max_length,
+        # Because of the delayed pattern mask, generation might stop earlier because of unexpected behaviour
+        # on the first tokens of the codebooks that are delayed.
+        # This fix the issue.
+        "min_new_tokens": num_codebooks + 1,
     }
 
     # Define gradient update step fn
@@ -887,6 +902,7 @@ def main():
                                 commit_message=f"Saving train state of step {cur_step}",
                                 run_as_future=True,
                             )
+                    accelerator.wait_for_everyone()
 
                 if training_args.do_eval and (cur_step % eval_steps == 0 or cur_step == total_train_steps):
                     train_time += time.time() - train_start
