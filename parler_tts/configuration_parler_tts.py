@@ -55,6 +55,9 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
             by meanpooling all the original heads within that group. For more details checkout [this
             paper](https://arxiv.org/pdf/2305.13245.pdf). If it is not specified, will default to
             `num_attention_heads`.
+        num_cross_attention_key_value_heads (`int`, *optional*):
+            This is the number of key_value heads that should be used to implement Grouped Query Attention in the cross-attention layers.
+            If it is not specified, will default to `num_attention_heads`.
         ffn_dim (`int`, *optional*, defaults to 4096):
             Dimensionality of the "intermediate" (often named feed-forward) layer in the Transformer block.
         activation_function (`str` or `function`, *optional*, defaults to `"gelu"`):
@@ -86,6 +89,8 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
             Whether to use ROPE or absolute positional embeddings.
         rope_theta (`float`, *optional*, defaults to 100000.0):
             The base period of the RoPE embeddings.
+        cross_attention_implementation_strategy (`str`, *optional*):
+            If not specified, the cross-attention implementation will be the same as `_attn_implementation`. If `always_eager`, it will always be the eager implementation. If `always_sdpa`, it will always be the sdpa implementation.
     """
 
     model_type = "parler_tts_decoder"
@@ -99,6 +104,7 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
         ffn_dim=4096,
         num_attention_heads=16,
         num_key_value_heads=None,
+        num_cross_attention_key_value_heads=None,
         layerdrop=0.0,
         use_cache=True,
         activation_function="gelu",
@@ -115,6 +121,7 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
         tie_word_embeddings=False,
         rope_embeddings=False,
         rope_theta=10_000.0,
+        cross_attention_implementation_strategy=None,
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -125,8 +132,10 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
         self.num_attention_heads = num_attention_heads
         if num_key_value_heads is None:
             num_key_value_heads = num_attention_heads
-
         self.num_key_value_heads = num_key_value_heads
+        if num_cross_attention_key_value_heads is None:
+            num_cross_attention_key_value_heads = num_attention_heads
+        self.num_cross_attention_key_value_heads = num_cross_attention_key_value_heads
         self.dropout = dropout
         self.attention_dropout = attention_dropout
         self.activation_dropout = activation_dropout
@@ -138,6 +147,7 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
         self.num_codebooks = num_codebooks
         self.rope_embeddings = rope_embeddings
         self.rope_theta = rope_theta
+        self.cross_attention_implementation_strategy = cross_attention_implementation_strategy
 
         super().__init__(
             pad_token_id=pad_token_id,
