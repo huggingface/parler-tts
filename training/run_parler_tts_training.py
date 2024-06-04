@@ -413,7 +413,10 @@ def main():
             output["len_audio"] = len_audio
             # (1, bsz, codebooks, seq_len) -> (bsz, seq_len, codebooks)
             output["labels"] = labels.squeeze(0).transpose(1, 2)
-            output["ratio"] = torch.ones_like(len_audio) * labels.shape[-1] / len_audio.max()
+            
+            # if `pad_to_max_length`, the maximum corresponding audio length of the current batch is max_duration*sampling_rate
+            max_length = len_audio.max() if padding != "max_length" else max_target_length
+            output["ratio"] = torch.ones_like(len_audio) * labels.shape[-1] / max_length
             return output
 
         for split in vectorized_datasets:
