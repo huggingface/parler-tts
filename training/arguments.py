@@ -78,6 +78,18 @@ class ModelArguments:
             "help": "Used to compute audio similarity during evaluation. Path to pretrained model or model identifier from huggingface.co/models"
         },
     )
+    attn_implementation: str = field(
+        default="eager",
+        metadata={
+            "help": "Attention implementation used. One of `eager`, `sdpa`, `flash_attention_2`"
+        },
+    )
+    cross_attention_implementation_strategy: str = field(
+        default=None,
+        metadata={
+            "help": "If not specified, the cross-attention implementation will be the same as `_attn_implementation`. If `always_eager`, it will always be the eager implementation. If `always_sdpa`, it will always be the sdpa implementation."
+        },
+    )
 
 
 @dataclass

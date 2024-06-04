@@ -301,6 +301,7 @@ def main():
             "decoder_start_token_id": model_args.decoder_start_token_id
             if model_args.decoder_start_token_id is not None
             else config.decoder_start_token_id,
+            "cross_attention_implementation_strategy": model_args.cross_attention_implementation_strategy if model_args.cross_attention_implementation_strategy is not None else None,
         }
     )
 
@@ -311,6 +312,7 @@ def main():
         config=config,
         token=data_args.token,
         trust_remote_code=data_args.trust_remote_code,
+        attn_implementation=model_args.attn_implementation,
     )
 
     # enable gradient checkpointing if necessary

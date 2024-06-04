@@ -57,7 +57,7 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
             `num_attention_heads`.
         num_cross_attention_key_value_heads (`int`, *optional*):
             This is the number of key_value heads that should be used to implement Grouped Query Attention in the cross-attention layers.
-            If it is not specified, will default to `num_attention_heads`.
+            If it is not specified, will default to `num_cross_attention_key_value_heads`.
         ffn_dim (`int`, *optional*, defaults to 4096):
             Dimensionality of the "intermediate" (often named feed-forward) layer in the Transformer block.
         activation_function (`str` or `function`, *optional*, defaults to `"gelu"`):
@@ -134,7 +134,7 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
             num_key_value_heads = num_attention_heads
         self.num_key_value_heads = num_key_value_heads
         if num_cross_attention_key_value_heads is None:
-            num_cross_attention_key_value_heads = num_attention_heads
+            num_cross_attention_key_value_heads = num_key_value_heads
         self.num_cross_attention_key_value_heads = num_cross_attention_key_value_heads
         self.dropout = dropout
         self.attention_dropout = attention_dropout
