@@ -448,7 +448,7 @@ def main():
             # (1, codebooks, seq_len) where seq_len=1
             bos_labels = torch.ones((1, num_codebooks, 1)) * audio_encoder_bos_token_id
 
-            if accelerator.is_main_process:
+            if accelerator.is_local_main_process:
                 tmp_labels = Dataset.from_dict({"labels": all_generated_labels, "target_length": all_lens})
                 tmp_labels.save_to_disk(
                     os.path.join(data_args.temporary_save_to_disk, split),
@@ -457,8 +457,8 @@ def main():
             del all_generated_labels
             accelerator.wait_for_everyone()
 
-            tmp_labels = datasets.load_from_disk(os.path.join(data_args.temporary_save_to_disk, split))
             with accelerator.local_main_process_first():
+                tmp_labels = datasets.load_from_disk(os.path.join(data_args.temporary_save_to_disk, split))
                 vectorized_datasets[split] = concatenate_datasets([vectorized_datasets[split], tmp_labels], axis=1)
 
             def postprocess_dataset(labels):
@@ -539,6 +539,7 @@ def main():
                 data_args.save_to_disk,
                 num_proc=min(data_args.preprocessing_num_workers, len(vectorized_datasets["eval"]) - 1),
             )
+        accelerator.wait_for_everyone()
         logger.info(f"Dataset saved at {data_args.save_to_disk}")
 
     audio_max_length = None
@@ -550,7 +551,7 @@ def main():
                 num_proc=num_workers,
                 input_columns=["target_length"],
             )
-        audio_max_length = torch.tensor(max_sample[0]["labels"]).shape[1]
+        audio_max_length = max([len(l[0]) for l in max_sample["labels"]])
 
     if training_args.group_by_length:
         # apply a simple heuristic to take into account audio and text lengths
