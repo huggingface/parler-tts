@@ -97,11 +97,6 @@ class DataCollatorParlerTTSWithPadding:
 
         batch = {"labels": labels, **input_ids}
 
-        if self.audio_max_length is not None and self.padding == "max_length":
-            # if we do torch.compile, we need to also specify the attention_mask
-            decoder_attention_mask = torch.ones(labels.shape[:2], dtype=input_ids["attention_mask"].dtype)
-            batch["decoder_attention_mask"] = decoder_attention_mask
-
         prompt_input_ids = [{"input_ids": feature["prompt_input_ids"]} for feature in features]
         prompt_input_ids = self.prompt_tokenizer.pad(
             prompt_input_ids,

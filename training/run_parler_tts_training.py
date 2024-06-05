@@ -80,10 +80,13 @@ def main():
 
     if training_args.dtype == "float16":
         mixed_precision = "fp16"
+        torch_dtype = torch.float16
     elif training_args.dtype == "bfloat16":
         mixed_precision = "bf16"
+        torch_dtype = torch.bfloat16
     else:
         mixed_precision = "no"
+        torch_dtype = torch.float32
 
     if data_args.pad_to_max_length and (
         data_args.max_duration_in_seconds is None
@@ -295,13 +298,13 @@ def main():
     )
 
     # update pad token id and decoder_start_token_id
+    config.decoder.update({"cross_attention_implementation_strategy": model_args.cross_attention_implementation_strategy if model_args.cross_attention_implementation_strategy is not None else None})
     config.update(
         {
             "pad_token_id": model_args.pad_token_id if model_args.pad_token_id is not None else config.pad_token_id,
             "decoder_start_token_id": model_args.decoder_start_token_id
             if model_args.decoder_start_token_id is not None
             else config.decoder_start_token_id,
-            "cross_attention_implementation_strategy": model_args.cross_attention_implementation_strategy if model_args.cross_attention_implementation_strategy is not None else None,
         }
     )
 
@@ -313,6 +316,7 @@ def main():
         token=data_args.token,
         trust_remote_code=data_args.trust_remote_code,
         attn_implementation=model_args.attn_implementation,
+        torch_dtype=torch_dtype if model_args.attn_implementation == "flash_attention_2" else None,
     )
 
     # enable gradient checkpointing if necessary
@@ -586,7 +590,7 @@ def main():
         input_ids = descriptions
         texts = description_tokenizer.batch_decode(input_ids, skip_special_tokens=True)
         prompts = prompt_tokenizer.batch_decode(prompts, skip_special_tokens=True)
-        audios = [a.cpu().numpy() for a in audios]
+        audios = [a.float().cpu().numpy() for a in audios]
 
         clap_score = clap_similarity(model_args.clap_model_name_or_path, texts, audios, device)
         results["clap"] = clap_score
@@ -823,7 +827,7 @@ def main():
 
     def generate_step(batch):
         batch.pop("decoder_attention_mask", None)
-        eval_model = accelerator.unwrap_model(model, keep_fp32_wrapper=mixed_precision != "fp16").eval()
+        eval_model = accelerator.unwrap_model(model, keep_fp32_wrapper=mixed_precision == "fp32").eval()
         if training_args.torch_compile:
             eval_model = model._orig_mod
 
