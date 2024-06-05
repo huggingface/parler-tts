@@ -266,21 +266,21 @@ class ParlerTTSRotaryEmbedding(nn.Module):
         self.register_buffer("_cos_cached", emb.cos().to(torch.get_default_dtype()), persistent=False)
         self.register_buffer("_sin_cached", emb.sin().to(torch.get_default_dtype()), persistent=False)
 
+    # Ignore copy
     @torch.no_grad()
-    def forward(self, x, position_ids):
+    def forward(self, device_type, position_ids):
         # x: [bs, num_attention_heads, seq_len, head_size]
-        inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1)
-        position_ids_expanded = position_ids[:, None, :].float()
+        inv_freq_expanded = self.inv_freq[None, :, None].expand(position_ids.shape[0], -1, 1)
+        position_ids_expanded = position_ids[:, None, :]
         # Force float32 since bfloat16 loses precision on long contexts
         # See https://github.com/huggingface/transformers/pull/29285
-        device_type = x.device.type
         device_type = device_type if isinstance(device_type, str) and device_type != "mps" else "cpu"
         with torch.autocast(device_type=device_type, enabled=False):
             freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
             emb = torch.cat((freqs, freqs), dim=-1)
             cos = emb.cos()
             sin = emb.sin()
-        return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
+        return cos, sin
 
 def rotate_half(x):
     """Rotates half the hidden dims of the input."""
@@ -323,6 +323,7 @@ class ParlerTTSAttention(nn.Module):
         is_decoder: bool = False,
         bias: bool = True,
         is_causal: bool = False,
+        rope_embeddings : bool = False,
         config: Optional[ParlerTTSDecoderConfig] = None,
     ):
         super().__init__()
@@ -348,13 +349,7 @@ class ParlerTTSAttention(nn.Module):
         self.q_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
         self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
 
-        self.rope_embeddings = config.rope_embeddings
-        if config.rope_embeddings:
-            self.rotary_emb = ParlerTTSRotaryEmbedding(
-                self.head_dim,
-                max_position_embeddings=config.max_position_embeddings,
-                base=config.rope_theta,
-            )
+        self.rope_embeddings = rope_embeddings
 
     def _shape_query(self, tensor: torch.Tensor, seq_len: int, bsz: int):
         return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
@@ -368,7 +363,8 @@ class ParlerTTSAttention(nn.Module):
         key_value_states: Optional[torch.Tensor] = None,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
+        cos: Optional[torch.LongTensor] = None,
+        sin: Optional[torch.LongTensor] = None,
         layer_head_mask: Optional[torch.Tensor] = None,
         output_attentions: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
@@ -378,19 +374,18 @@ class ParlerTTSAttention(nn.Module):
         # for the decoder
         is_cross_attention = key_value_states is not None
 
-        bsz, tgt_len, _ = hidden_states.size()
-
+        bsz, tgt_len = hidden_states.shape[:2]
+        
         # get query proj
         query_states = self.q_proj(hidden_states) * self.scaling
         query_states = self._shape_query(query_states, tgt_len, bsz)
 
         if self.rope_embeddings:
-            cos, sin = self.rotary_emb(query_states, position_ids)
             query_states = apply_rotary_pos_emb(query_states, cos, sin)
 
-        # get key, value proj
-        # `past_key_value[0].shape[2] == key_value_states.shape[1]`
-        # is checking that the `sequence_length` of the `past_key_value` is the same as
+        current_states = key_value_states if key_value_states is not None else hidden_states
+
+        # checking that the `sequence_length` of the `past_key_value` is the same as
         # the provided `key_value_states` to support prefix tuning
         if (
             is_cross_attention
@@ -400,23 +395,17 @@ class ParlerTTSAttention(nn.Module):
             # reuse k,v, cross_attentions
             key_states = past_key_value[0]
             value_states = past_key_value[1]
-        elif is_cross_attention:
-            # cross_attentions - don't apply rope to the key states, since they already have positional embeddings applied
-            key_states = self._shape_key_value(self.k_proj(key_value_states), -1, bsz)
-            value_states = self._shape_key_value(self.v_proj(key_value_states), -1, bsz)
-        elif past_key_value is not None:
-            # reuse k, v, self_attention
-            key_states = self._shape_key_value(self.k_proj(hidden_states), -1, bsz)
-            value_states = self._shape_key_value(self.v_proj(hidden_states), -1, bsz)
-            # cached key states already have rope applied - only apply to new state
-            key_states = apply_rotary_pos_emb(key_states, cos, sin) if self.rope_embeddings else key_states
-            key_states = torch.cat([past_key_value[0], key_states], dim=2)
-            value_states = torch.cat([past_key_value[1], value_states], dim=2)
         else:
-            # self_attention
-            key_states = self._shape_key_value(self.k_proj(hidden_states), -1, bsz)
-            value_states = self._shape_key_value(self.v_proj(hidden_states), -1, bsz)
-            key_states = apply_rotary_pos_emb(key_states, cos, sin) if self.rope_embeddings else key_states
+            key_states = self._shape_key_value(self.k_proj(current_states), -1, bsz)
+            value_states = self._shape_key_value(self.v_proj(current_states), -1, bsz)
+            
+            if not is_cross_attention:
+                # cached key states already have rope applied - only apply to new state
+                key_states = apply_rotary_pos_emb(key_states, cos, sin) if self.rope_embeddings else key_states
+
+                if past_key_value is not None:
+                    key_states = torch.cat([past_key_value[0], key_states], dim=2)
+                    value_states = torch.cat([past_key_value[1], value_states], dim=2)
 
         if self.is_decoder:
             # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
@@ -528,7 +517,8 @@ class ParlerTTSFlashAttention2(ParlerTTSAttention):
         key_value_states: Optional[torch.Tensor] = None,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
+        cos: Optional[torch.LongTensor] = None,
+        sin: Optional[torch.LongTensor] = None,
         layer_head_mask: Optional[torch.Tensor] = None,
         output_attentions: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
@@ -540,18 +530,17 @@ class ParlerTTSFlashAttention2(ParlerTTSAttention):
         # for the decoder
         is_cross_attention = key_value_states is not None
 
-        bsz, q_len, _ = hidden_states.size()
+        bsz, q_len = hidden_states.shape[:2]
 
         # get query proj
         query_states = self.q_proj(hidden_states).view(bsz, q_len, self.num_heads, self.head_dim)
         
         if self.rope_embeddings:
-            cos, sin = self.rotary_emb(query_states.transpose(1,2), position_ids)
             query_states = apply_rotary_pos_emb(query_states, cos, sin, unsqueeze_dim=2)
 
-        # get key, value proj
-        # `past_key_value[0].shape[2] == key_value_states.shape[1]`
-        # is checking that the `sequence_length` of the `past_key_value` is the same as
+        current_states = key_value_states if key_value_states is not None else hidden_states
+
+        # checking that the `sequence_length` of the `past_key_value` is the same as
         # the provided `key_value_states` to support prefix tuning
         if (
             is_cross_attention
@@ -561,24 +550,17 @@ class ParlerTTSFlashAttention2(ParlerTTSAttention):
             # reuse k,v, cross_attentions
             key_states = past_key_value[0].transpose(1,2)
             value_states = past_key_value[1].transpose(1,2)
-        elif is_cross_attention:
-            # cross_attentions
-            key_states = self.k_proj(key_value_states).view(bsz, -1, self.num_key_value_heads, self.head_dim)
-            value_states = self.v_proj(key_value_states).view(bsz, -1, self.num_key_value_heads, self.head_dim)
-        elif past_key_value is not None:
-            # reuse k, v, self_attention
-            key_states = self.k_proj(hidden_states).view(bsz, -1, self.num_key_value_heads, self.head_dim)
-            value_states = self.v_proj(hidden_states).view(bsz, -1, self.num_key_value_heads, self.head_dim)
-            # cached key states already have rope applied - only apply to new state
-            key_states = apply_rotary_pos_emb(key_states, cos, sin, unsqueeze_dim=2) if self.rope_embeddings else key_states
-            key_states = torch.cat([past_key_value[0].transpose(1,2), key_states], dim=1)
-            value_states = torch.cat([past_key_value[1].transpose(1,2), value_states], dim=1)
         else:
-            # self_attention
-            key_states = self.k_proj(hidden_states).view(bsz, -1, self.num_key_value_heads, self.head_dim)
-            value_states = self.v_proj(hidden_states).view(bsz, -1, self.num_key_value_heads, self.head_dim)
-            key_states = apply_rotary_pos_emb(key_states, cos, sin, unsqueeze_dim=2) if self.rope_embeddings else key_states
-
+            key_states = self.k_proj(current_states).view(bsz, -1, self.num_key_value_heads, self.head_dim)
+            value_states = self.v_proj(current_states).view(bsz, -1, self.num_key_value_heads, self.head_dim)
+            
+            if not is_cross_attention:
+                # cached key states already have rope applied - only apply to new state
+                key_states = apply_rotary_pos_emb(key_states, cos, sin, unsqueeze_dim=2) if self.rope_embeddings else key_states
+                
+                if past_key_value is not None:
+                    key_states = torch.cat([past_key_value[0].transpose(1,2), key_states], dim=1)
+                    value_states = torch.cat([past_key_value[1].transpose(1,2), value_states], dim=1)
 
         if self.is_decoder:
             # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
@@ -739,7 +721,8 @@ class ParlerTTSSdpaAttention(ParlerTTSAttention):
         key_value_states: Optional[torch.Tensor] = None,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
+        cos: Optional[torch.LongTensor] = None,
+        sin: Optional[torch.LongTensor] = None,
         layer_head_mask: Optional[torch.Tensor] = None,
         output_attentions: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
@@ -763,19 +746,18 @@ class ParlerTTSSdpaAttention(ParlerTTSAttention):
         # for the decoder
         is_cross_attention = key_value_states is not None
 
-        bsz, tgt_len, _ = hidden_states.size()
+        bsz, tgt_len = hidden_states.shape[:2]
 
         # get query proj
         query_states = self.q_proj(hidden_states)
         query_states = self._shape_query(query_states, tgt_len, bsz)
 
         if self.rope_embeddings:
-            cos, sin = self.rotary_emb(query_states, position_ids)
             query_states = apply_rotary_pos_emb(query_states, cos, sin)
 
-        # get key, value proj
-        # `past_key_value[0].shape[2] == key_value_states.shape[1]`
-        # is checking that the `sequence_length` of the `past_key_value` is the same as
+        current_states = key_value_states if key_value_states is not None else hidden_states
+
+        # checking that the `sequence_length` of the `past_key_value` is the same as
         # the provided `key_value_states` to support prefix tuning
         if (
             is_cross_attention
@@ -785,23 +767,17 @@ class ParlerTTSSdpaAttention(ParlerTTSAttention):
             # reuse k,v, cross_attentions
             key_states = past_key_value[0]
             value_states = past_key_value[1]
-        elif is_cross_attention:
-            # cross_attentions - don't apply rope to the key states, since they already have positional embeddings applied
-            key_states = self._shape_key_value(self.k_proj(key_value_states), -1, bsz)
-            value_states = self._shape_key_value(self.v_proj(key_value_states), -1, bsz)
-        elif past_key_value is not None:
-            # reuse k, v, self_attention
-            key_states = self._shape_key_value(self.k_proj(hidden_states), -1, bsz)
-            value_states = self._shape_key_value(self.v_proj(hidden_states), -1, bsz)
-            # cached key states already have rope applied - only apply to new state
-            key_states = apply_rotary_pos_emb(key_states, cos, sin) if self.rope_embeddings else key_states
-            key_states = torch.cat([past_key_value[0], key_states], dim=2)
-            value_states = torch.cat([past_key_value[1], value_states], dim=2)
         else:
-            # self_attention
-            key_states = self._shape_key_value(self.k_proj(hidden_states), -1, bsz)
-            value_states = self._shape_key_value(self.v_proj(hidden_states), -1, bsz)
-            key_states = apply_rotary_pos_emb(key_states, cos, sin) if self.rope_embeddings else key_states
+            key_states = self._shape_key_value(self.k_proj(current_states), -1, bsz)
+            value_states = self._shape_key_value(self.v_proj(current_states), -1, bsz)
+            
+            if not is_cross_attention:
+                # cached key states already have rope applied - only apply to new state
+                key_states = apply_rotary_pos_emb(key_states, cos, sin) if self.rope_embeddings else key_states
+
+                if past_key_value is not None:
+                    key_states = torch.cat([past_key_value[0], key_states], dim=2)
+                    value_states = torch.cat([past_key_value[1], value_states], dim=2)
 
         if self.is_decoder:
             # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
@@ -874,6 +850,7 @@ class ParlerTTSDecoderLayer(nn.Module):
             is_decoder=True,
             is_causal=True,
             bias=False,
+            rope_embeddings=config.rope_embeddings,
             config=config,
         )
         self.dropout = config.dropout
@@ -893,6 +870,7 @@ class ParlerTTSDecoderLayer(nn.Module):
             dropout=config.attention_dropout,
             is_decoder=True,
             bias=False,
+            rope_embeddings=config.rope_embeddings,
             config=config,
         )
         self.encoder_attn_layer_norm = nn.LayerNorm(self.embed_dim)
@@ -904,7 +882,8 @@ class ParlerTTSDecoderLayer(nn.Module):
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
+        cos: Optional[torch.LongTensor] = None,
+        sin: Optional[torch.LongTensor] = None,
         encoder_hidden_states: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
         layer_head_mask: Optional[torch.Tensor] = None,
@@ -947,7 +926,8 @@ class ParlerTTSDecoderLayer(nn.Module):
             hidden_states=hidden_states,
             past_key_value=self_attn_past_key_value,
             attention_mask=attention_mask,
-            position_ids=position_ids,
+            cos=cos,
+            sin=sin,
             layer_head_mask=layer_head_mask,
             output_attentions=output_attentions,
         )
@@ -967,7 +947,8 @@ class ParlerTTSDecoderLayer(nn.Module):
                 hidden_states=hidden_states,
                 key_value_states=encoder_hidden_states,
                 attention_mask=encoder_attention_mask,
-                position_ids=position_ids,
+                cos=cos,
+                sin=sin,
                 layer_head_mask=cross_attn_layer_head_mask,
                 past_key_value=cross_attn_past_key_value,
                 output_attentions=output_attentions,
@@ -1276,6 +1257,12 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                 config.max_position_embeddings,
                 config.hidden_size,
             )
+        else:
+            self.rotary_emb = ParlerTTSRotaryEmbedding(
+                config.hidden_size // config.num_attention_heads,
+                max_position_embeddings=config.max_position_embeddings,
+                base=config.rope_theta,
+            )
 
         self.layers = nn.ModuleList([ParlerTTSDecoderLayer(config) for _ in range(config.num_hidden_layers)])
         self.layer_norm = nn.LayerNorm(config.hidden_size)
@@ -1368,6 +1355,7 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                 )
 
         input_shape = inputs_embeds.size()[:-1]
+        cos, sin = None, None
 
         if not self.rope_embeddings:
             # embed positions
@@ -1394,6 +1382,9 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                 # Some generation methods already pass only the last input ID
                 if position_ids.shape[1] > input_shape[1]:
                     position_ids = position_ids[:, -input_shape[1]:]
+                    
+            cos, sin = self.rotary_emb(hidden_states.device.type, position_ids)
+            cos, sin = cos.to(hidden_states.dtype), sin.to(hidden_states.dtype)
 
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
 
@@ -1471,7 +1462,8 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                     decoder_layer.forward,
                     hidden_states,
                     attention_mask,
-                    position_ids,
+                    cos,
+                    sin,
                     encoder_hidden_states,
                     encoder_attention_mask,
                     head_mask[idx] if head_mask is not None else None,
@@ -1484,7 +1476,8 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                 layer_outputs = decoder_layer(
                     hidden_states,
                     attention_mask=attention_mask,
-                    position_ids=position_ids,
+                    cos=cos,
+                    sin=sin,
                     encoder_hidden_states=encoder_hidden_states,
                     encoder_attention_mask=encoder_attention_mask,
                     layer_head_mask=(head_mask[idx] if head_mask is not None else None),
