@@ -1267,6 +1267,10 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
         self.layers = nn.ModuleList([ParlerTTSDecoderLayer(config) for _ in range(config.num_hidden_layers)])
         self.layer_norm = nn.LayerNorm(config.hidden_size)
         self.attn_implementation = config._attn_implementation
+        encoder_attn_implementation = config._attn_implementation
+        if config.cross_attention_implementation_strategy is not None:
+            encoder_attn_implementation = "sdpa" if config.cross_attention_implementation_strategy == "always_sdpa" else "eager"
+        self.encoder_attn_implementation = encoder_attn_implementation
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
         self.post_init()
@@ -1400,8 +1404,6 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                 inputs_embeds,
                 past_key_values_length,
             )
-
-
         else:
             attention_mask = _prepare_4d_causal_attention_mask(
                 attention_mask, input_shape, inputs_embeds, past_key_values_length
@@ -1409,9 +1411,9 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
 
         # expand encoder attention mask
         if encoder_hidden_states is not None and encoder_attention_mask is not None:
-            if self.attn_implementation == "flash_attention_2":
+            if self.encoder_attn_implementation == "flash_attention_2":
                 encoder_attention_mask = encoder_attention_mask if 0 in encoder_attention_mask else None
-            elif self.attn_implementation == "sdpa" and cross_attn_head_mask is None and not output_attentions:
+            elif self.encoder_attn_implementation == "sdpa" and cross_attn_head_mask is None and not output_attentions:
                 # output_attentions=True & cross_attn_head_mask can not be supported when using SDPA, and we fall back on
                 # the manual implementation that requires a 4D causal mask in all cases.
                 # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
@@ -3199,9 +3201,6 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             output_ids = outputs.sequences
         else:
             output_ids = outputs
-
-        # TODO: remove
-        return 
 
         # Apply the pattern mask to the final ids
         output_ids = self.decoder.apply_delay_pattern_mask(output_ids, model_kwargs["decoder_delay_pattern_mask"])
