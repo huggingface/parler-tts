@@ -23,7 +23,7 @@ def clap_similarity(clap_model_name_or_path, texts, audios, device):
 
 def wer(asr_model_name_or_path, prompts, audios, device, per_device_eval_batch_size, sampling_rate):
     metric = evaluate.load("wer")
-    asr_pipeline = pipeline(model=asr_model_name_or_path, device=device)
+    asr_pipeline = pipeline(model=asr_model_name_or_path, device=device, chunk_length_s=25.0)
 
     return_language = None
     if isinstance(asr_pipeline.model, WhisperForConditionalGeneration):
