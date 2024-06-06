@@ -561,7 +561,7 @@ class ParlerTTSFlashAttention2(ParlerTTSAttention):
                 if past_key_value is not None:
                     key_states = torch.cat([past_key_value[0].transpose(1,2), key_states], dim=1)
                     value_states = torch.cat([past_key_value[1].transpose(1,2), value_states], dim=1)
-
+            
         if self.is_decoder:
             # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
             # Further calls to cross_attention layer can then reuse all cross-attention
@@ -571,10 +571,6 @@ class ParlerTTSFlashAttention2(ParlerTTSAttention):
             # can concat previous decoder key/value_states to current projected key/value_states (third "elif" case)
             # if encoder bi-directional self-attention `past_key_value` is always `None`
             past_key_value = (key_states.transpose(1,2), value_states.transpose(1,2))
-
-        kv_seq_len = key_states.shape[-3]
-        if past_key_value is not None:
-            kv_seq_len += past_key_value[0].shape[-2]
 
         # In PEFT, usually we cast the layer norms in float32 for training stability reasons
         # therefore the input hidden states gets silently casted in float32. Hence, we need
@@ -792,8 +788,6 @@ class ParlerTTSSdpaAttention(ParlerTTSAttention):
         # repeat k/v heads if n_kv_heads < n_heads
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
-
-        query_states = self._shape_query(query_states, tgt_len, bsz)
 
         # We dispatch to SDPA's Flash Attention or Efficient kernels via this `is_causal` if statement instead of an inline conditional assignment
         # in SDPA to support both torch.compile's dynamic shapes and full graph options. An inline conditional prevents dynamic shapes from compiling.
@@ -1088,6 +1082,7 @@ MUSICGEN_INPUTS_DOCSTRING = r"""
             Tuple consists of (`last_hidden_state`, *optional*: `hidden_states`, *optional*: `attentions`)
             `last_hidden_state` of shape `(batch_size, sequence_length, hidden_size)`, *optional*) is a sequence of
             hidden-states at the output of the last layer of the encoder. Used in the cross-attention of the decoder.
+            TODO: it's passed through enc_to_dec_proj and optionnally we concat the prompt hidden states in certain cases.
         past_key_values (`tuple(tuple(torch.FloatTensor))`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):
             Tuple of `tuple(torch.FloatTensor)` of length `config.n_layers`, with each tuple having 2 tensors of shape
             `(batch_size, num_heads, sequence_length, embed_size_per_head)`) and 2 additional tensors of shape
@@ -1331,7 +1326,10 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
         if prompt_hidden_states is not None:
             inputs_embeds = torch.cat([prompt_hidden_states, inputs_embeds], dim=1)
 
-        # As it is, the masked ids from the prompt will still count in the positions embeddings
+        # NOTE: 1. As it is, the masked ids from the prompt will still count in the positions embeddings
+        # NOTE: 2. we want to concatenate the prompt attention mask and the decoder attention mask
+        # i.i.f `prompt_cross_attention=False`. ParlerTTSForConditionalGeneration's taking care of setting
+        # `prompt_attention_mask=None`
         if prompt_attention_mask is not None and attention_mask is not None:
             attention_mask = torch.cat([prompt_attention_mask, attention_mask], dim=1)
         elif prompt_attention_mask is not None:
@@ -1347,6 +1345,9 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                     dim=1,
                 )
             else:
+                # In the generation case of `prompt_cross_attention=True`, we need to recreate an attention mask from scratch
+                # to be able to prepend the prompt attention mask.
+                # Since we generate token per token, we can recompute the generated length from the information we have.
                 generated_length = past_key_values_length - prompt_attention_mask.shape[1] + 1
                 attention_mask = torch.cat(
                     [
@@ -2548,6 +2549,9 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             argument[len("decoder_") :]: value for argument, value in kwargs.items() if argument.startswith("decoder_")
         }
 
+        if prompt_hidden_states is None:
+            if prompt_input_ids is not None:
+                prompt_hidden_states = self.embed_prompts(prompt_input_ids)
 
         if encoder_outputs is None:
             encoder_outputs = self.text_encoder(
@@ -2559,42 +2563,42 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 return_dict=return_dict,
                 **kwargs_text_encoder,
             )
+            encoder_hidden_states = encoder_outputs[0]
+
+            # optionally project encoder_hidden_states
+            if (
+                self.text_encoder.config.hidden_size != self.decoder.config.hidden_size
+                and self.decoder.config.cross_attention_hidden_size is None
+            ):
+                encoder_hidden_states = self.enc_to_dec_proj(encoder_hidden_states)
+
+            if attention_mask is not None:
+                encoder_hidden_states = encoder_hidden_states * attention_mask[..., None]
+
+            if prompt_hidden_states is not None and self.prompt_cross_attention:
+                # add sinusoidal positional embedding
+                positions = self.embed_positions(prompt_hidden_states, 0)
+                prompt_hidden_states = prompt_hidden_states + positions.to(prompt_hidden_states.device)
+                
+                if prompt_attention_mask is not None and attention_mask is None:
+                    attention_mask = torch.ones(encoder_hidden_states.shape[:2], device=self.device, dtype=prompt_attention_mask.dtype)
+                elif attention_mask is not None and prompt_attention_mask is None:
+                    prompt_attention_mask = torch.ones(prompt_hidden_states.shape[:2], device=self.device, dtype=attention_mask.dtype)
+
+                # concatenate text description states with prompt description states
+                encoder_hidden_states = torch.cat([encoder_hidden_states, prompt_hidden_states], dim=1)
+                if prompt_attention_mask is not None:
+                    attention_mask = torch.cat([attention_mask, prompt_attention_mask], dim=1)
+
+                prompt_hidden_states = None
+                prompt_attention_mask = None
+            
+            encoder_outputs["last_hidden_state"] = encoder_hidden_states
+
         elif isinstance(encoder_outputs, tuple):
             encoder_outputs = BaseModelOutput(*encoder_outputs)
 
-        encoder_hidden_states = encoder_outputs[0]
-
-        # optionally project encoder_hidden_states
-        if (
-            self.text_encoder.config.hidden_size != self.decoder.config.hidden_size
-            and self.decoder.config.cross_attention_hidden_size is None
-        ):
-            encoder_hidden_states = self.enc_to_dec_proj(encoder_hidden_states)
-
-        if attention_mask is not None:
-            encoder_hidden_states = encoder_hidden_states * attention_mask[..., None]
-
-        if prompt_hidden_states is None:
-            if prompt_input_ids is not None:
-                prompt_hidden_states = self.embed_prompts(prompt_input_ids)
-
-        if prompt_hidden_states is not None and self.prompt_cross_attention:
-            # add sinusoidal positional embedding
-            positions = self.embed_positions(prompt_hidden_states, 0)
-            prompt_hidden_states = prompt_hidden_states + positions.to(prompt_hidden_states.device)
-            
-            if prompt_attention_mask is not None and attention_mask is None:
-                attention_mask = torch.ones(encoder_hidden_states.shape[:2], device=self.device, dtype=prompt_attention_mask.dtype)
-            elif attention_mask is not None and prompt_attention_mask is None:
-                prompt_attention_mask = torch.ones(prompt_hidden_states.shape[:2], device=self.device, dtype=attention_mask.dtype)
-
-            # concatenate text description states with prompt description states
-            encoder_hidden_states = torch.cat([encoder_hidden_states, prompt_hidden_states], dim=1)
-            if prompt_attention_mask is not None:
-                attention_mask = torch.cat([attention_mask, prompt_attention_mask], dim=1)
-
-            prompt_hidden_states = None
-            prompt_attention_mask = None
+        encoder_hidden_states = encoder_outputs.last_hidden_state
 
         if (labels is not None) and (decoder_input_ids is None and decoder_inputs_embeds is None):
             decoder_input_ids = shift_tokens_right(
@@ -2706,8 +2710,9 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
 
             decoder_input_ids = decoder_input_ids[:, remove_prefix_length:]
 
-            # we only want to use prompt signal in the 1st generation step but keeping the attention mask
-            prompt_hidden_states = prompt_hidden_states if self.prompt_cross_attention else None
+            # if prompt_cross_attention,
+            # we only want to use prompt signal in the 1st generation step
+            prompt_hidden_states = None
 
         return {
             "input_ids": None,  # encoder_outputs is defined. input_ids not needed
@@ -2816,12 +2821,52 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                     [model_kwargs["attention_mask"], torch.zeros_like(model_kwargs["attention_mask"])], dim=0
                 )
 
-        model_kwargs["encoder_outputs"] = BaseModelOutput(last_hidden_state=last_hidden_state)
+        # we optionnally project last_hidden_state to avoid recomputing every time
+        encoder_hidden_states = last_hidden_state
+        if (
+            self.text_encoder.config.hidden_size != self.decoder.config.hidden_size
+            and self.decoder.config.cross_attention_hidden_size is None
+        ):
+            encoder_hidden_states = self.enc_to_dec_proj(encoder_hidden_states)
+
+        if model_kwargs["attention_mask"] is not None:
+            encoder_hidden_states = encoder_hidden_states * model_kwargs["attention_mask"][..., None]
+
+        model_kwargs["encoder_outputs"] = BaseModelOutput(last_hidden_state=encoder_hidden_states)
 
         return model_kwargs
 
     def _prepare_prompt_kwargs_for_generation(self, prompt_input_ids, model_kwargs):
-        model_kwargs["prompt_hidden_states"] = self.embed_prompts(prompt_input_ids)
+        prompt_hidden_states = self.embed_prompts(prompt_input_ids)
+
+        if self.prompt_cross_attention:
+            # add sinusoidal positional embedding
+            positions = self.embed_positions(prompt_hidden_states, 0)
+            prompt_hidden_states = prompt_hidden_states + positions.to(prompt_hidden_states.device)
+            
+            attention_mask = model_kwargs.get("attention_mask", None)
+            prompt_attention_mask = model_kwargs.get("prompt_attention_mask", None)
+            encoder_hidden_states = model_kwargs["encoder_outputs"].last_hidden_state
+
+            if prompt_attention_mask is not None and attention_mask is None:
+                attention_mask = torch.ones(encoder_hidden_states.shape[:2], device=self.device, dtype=prompt_attention_mask.dtype)
+            elif attention_mask is not None and prompt_attention_mask is None:
+                prompt_attention_mask = torch.ones(prompt_hidden_states.shape[:2], device=self.device, dtype=attention_mask.dtype)
+
+            # concatenate text description states with prompt description states
+            encoder_hidden_states = torch.cat([encoder_hidden_states, prompt_hidden_states], dim=1)
+            if prompt_attention_mask is not None:
+                attention_mask = torch.cat([attention_mask, prompt_attention_mask], dim=1)
+        
+            model_kwargs["encoder_outputs"].last_hidden_state = encoder_hidden_states
+            model_kwargs["attention_mask"] = attention_mask
+            
+            # in this case, since we already concatenated the prompt hidden states and attention mask, we don't need them anymore. 
+            model_kwargs["prompt_hidden_states"] = None
+            model_kwargs["prompt_attention_mask"] = None            
+        else:
+            model_kwargs["prompt_hidden_states"] = prompt_hidden_states
+            # we're keeping the prompt attention mask because it has to be prepended to the decoder attention mask on the fly 
         return model_kwargs
 
     def _prepare_audio_encoder_kwargs_for_generation(
