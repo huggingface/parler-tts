@@ -316,7 +316,6 @@ def main():
         token=data_args.token,
         trust_remote_code=data_args.trust_remote_code,
         attn_implementation=model_args.attn_implementation,
-        torch_dtype=torch_dtype if model_args.attn_implementation == "flash_attention_2" else None,
     )
 
     # enable gradient checkpointing if necessary
@@ -342,6 +341,7 @@ def main():
     max_length = model.generation_config.max_length
     num_codebooks = model.decoder.config.num_codebooks
     bandwidth = model_args.bandwidth
+    attn_implementation = model_args.attn_implementation
 
     # Freeze Encoders
     model.freeze_encoders(model_args.freeze_text_encoder)
@@ -831,7 +831,9 @@ def main():
         if training_args.torch_compile:
             eval_model = model._orig_mod
 
-        output_audios = eval_model.generate(**batch, **gen_kwargs)
+        # since we've might have loaded the weights in fp32, we have to autocast to ensure FA2 weights are in half-precision.  
+        with accelerator.autocast(autocast_handler=AutocastKwargs(enabled=(attn_implementation=="flash_attention_2"))):
+            output_audios = eval_model.generate(**batch, **gen_kwargs)
         output_audios = accelerator.pad_across_processes(output_audios, dim=1, pad_index=0)
         return output_audios
 
@@ -1040,5 +1042,4 @@ def main():
 
 
 if __name__ == "__main__":
-    set_start_method("spawn")
     main()
