@@ -222,7 +222,8 @@ def main():
     # assume that the dataset has been saved to `save_to_disk` if the latter is not empty
     dataset_was_precomputed = len(os.listdir(data_args.save_to_disk)) > 0
     if dataset_was_precomputed:
-        vectorized_datasets = datasets.load_from_disk(data_args.save_to_disk)
+        with accelerator.local_main_process_first():
+            vectorized_datasets = datasets.load_from_disk(data_args.save_to_disk)
     else:
         raw_datasets = DatasetDict()
 
@@ -285,9 +286,10 @@ def main():
             )
 
             if data_args.max_eval_samples is not None:
-                raw_datasets["eval"] = (
-                    raw_datasets["eval"].shuffle(seed=training_args.seed).select(range(data_args.max_eval_samples))
-                )
+                with accelerator.local_main_process_first():
+                    raw_datasets["eval"] = (
+                        raw_datasets["eval"].shuffle(seed=training_args.seed).select(range(data_args.max_eval_samples))
+                    )
 
     # 3. Next, let's load the config.
     config = ParlerTTSConfig.from_pretrained(
@@ -743,7 +745,8 @@ def main():
         steps_trained_progress_bar.update(cur_step)
 
         for epoch in range(0, epochs_trained):
-            vectorized_datasets["train"] = vectorized_datasets["train"].shuffle(training_args.seed)
+            with accelerator.local_main_process_first():
+                vectorized_datasets["train"] = vectorized_datasets["train"].shuffle(training_args.seed)
 
         if training_args.max_steps < 0:
             # we know exactly the number of steps per epoch, so can skip through the required number of batches
@@ -753,7 +756,8 @@ def main():
             # So we just shuffle the dataset one extra time and start from a fresh epoch
             # This is "good enough" for our purposes but not fully correct
             resume_step = None
-            vectorized_datasets["train"] = vectorized_datasets["train"].shuffle(training_args.seed)
+            with accelerator.local_main_process_first():
+                vectorized_datasets["train"] = vectorized_datasets["train"].shuffle(training_args.seed)
     else:
         resume_step = None
 
@@ -838,7 +842,8 @@ def main():
         return output_audios
 
     for epoch in range(epochs_trained, num_epochs):
-        vectorized_datasets["train"] = vectorized_datasets["train"].shuffle(training_args.seed)
+        with accelerator.local_main_process_first():
+            vectorized_datasets["train"] = vectorized_datasets["train"].shuffle(training_args.seed)
         sampler = None
         if training_args.group_by_length:
             sampler = LengthGroupedSampler(train_batch_size, lengths=vectorized_datasets["train"]["target_length"])
@@ -933,7 +938,7 @@ def main():
                         collate_fn=data_collator,
                         batch_size=per_device_eval_batch_size,
                         drop_last=False,
-                        num_workers=training_args.dataloader_pin_memory,
+                        num_workers=training_args.eval_dataloader_num_workers,
                         pin_memory=training_args.dataloader_pin_memory,
                     )
                     validation_dataloader = accelerator.prepare(validation_dataloader)

@@ -323,3 +323,7 @@ class ParlerTTSTrainingArguments(Seq2SeqTrainingArguments):
         default=8,
         metadata={"help": ("Specify the batch size of the audio encoding pre-processing steps.")},
     )
+    eval_dataloader_num_workers: Optional[int] = field(
+        default=0,
+        metadata={"help": ("Number of subprocesses to use for evaluation data loading (PyTorch only). 0 means that the data will be loaded in the main process.")},
+    )            
