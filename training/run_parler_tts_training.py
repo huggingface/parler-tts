@@ -43,7 +43,7 @@ from transformers.utils import send_example_telemetry
 
 
 from accelerate import Accelerator
-from accelerate.utils import set_seed, AutocastKwargs, InitProcessGroupKwargs, TorchDynamoPlugin
+from accelerate.utils import set_seed, AutocastKwargs, InitProcessGroupKwargs, TorchDynamoPlugin, DistributedDataParallelKwargs
 from accelerate.utils.memory import release_memory
 
 from parler_tts import (
@@ -97,7 +97,8 @@ def main():
     padding = "max_length" if data_args.pad_to_max_length else "longest"
 
     ####### A. Preparation
-    kwargs_handlers = [InitProcessGroupKwargs(timeout=timedelta(minutes=60))]
+    kwargs_handlers = [InitProcessGroupKwargs(timeout=timedelta(minutes=60)),
+                        DistributedDataParallelKwargs(find_unused_parameters=True)]
 
     accelerator = Accelerator(
         gradient_accumulation_steps=training_args.gradient_accumulation_steps,
