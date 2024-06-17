@@ -433,8 +433,8 @@ def main():
 
                 if accelerator.is_main_process:
                     lab = generate_labels["labels"].cpu().transpose(1, 2).to(torch.int16)
-                    rat = generate_labels["ratio"].cpu().squeeze()
-                    lens = generate_labels["len_audio"].cpu().squeeze()
+                    rat = generate_labels["ratio"].cpu().reshape(-1)
+                    lens = generate_labels["len_audio"].cpu().reshape(-1)
                     lab = [l[:, : int(ratio * length)] for (l, ratio, length) in zip(lab, rat, lens)]
 
                     all_generated_labels.extend(lab)
