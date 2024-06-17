@@ -43,7 +43,7 @@ from transformers.utils import send_example_telemetry
 
 
 from accelerate import Accelerator
-from accelerate.utils import set_seed, AutocastKwargs, InitProcessGroupKwargs, TorchDynamoPlugin
+from accelerate.utils import set_seed, AutocastKwargs, InitProcessGroupKwargs, TorchDynamoPlugin, DistributedDataParallelKwargs
 from accelerate.utils.memory import release_memory
 
 from parler_tts import (
@@ -97,7 +97,8 @@ def main():
     padding = "max_length" if data_args.pad_to_max_length else "longest"
 
     ####### A. Preparation
-    kwargs_handlers = [InitProcessGroupKwargs(timeout=timedelta(minutes=60))]
+    kwargs_handlers = [InitProcessGroupKwargs(timeout=timedelta(minutes=60)),
+                        DistributedDataParallelKwargs(find_unused_parameters=True)]
 
     accelerator = Accelerator(
         gradient_accumulation_steps=training_args.gradient_accumulation_steps,
@@ -432,8 +433,8 @@ def main():
 
                 if accelerator.is_main_process:
                     lab = generate_labels["labels"].cpu().transpose(1, 2).to(torch.int16)
-                    rat = generate_labels["ratio"].cpu().squeeze()
-                    lens = generate_labels["len_audio"].cpu().squeeze()
+                    rat = generate_labels["ratio"].cpu().reshape(-1)
+                    lens = generate_labels["len_audio"].cpu().reshape(-1)
                     lab = [l[:, : int(ratio * length)] for (l, ratio, length) in zip(lab, rat, lens)]
 
                     all_generated_labels.extend(lab)

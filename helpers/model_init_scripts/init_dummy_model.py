@@ -57,7 +57,11 @@ if __name__ == "__main__":
     model.generation_config.eos_token_id = encodec_vocab_size
 
     # set other default generation config params
-    model.generation_config.max_length = int(30 * model.audio_encoder.config.frame_rate)
+    '''
+    In DAC, the 'model.audio_encoder.config.frame_rate' is 86
+    'model.generation_config.max_length' should be smaller than 'max_position_embeddings' in the decoder.
+    '''
+    model.generation_config.max_length = int(20 * model.audio_encoder.config.frame_rate)
     model.generation_config.do_sample = True  # True
     model.generation_config.guidance_scale = 1  # 3.0
     
