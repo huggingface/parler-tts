@@ -370,15 +370,19 @@ class ParlerTTSAttention(nn.Module):
         sin: Optional[torch.LongTensor] = None,
         layer_head_mask: Optional[torch.Tensor] = None,
         output_attentions: bool = False,
+        cache_position: Optional[torch.LongTensor] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         """Input shape: Batch x Time x Channel"""
 
         # if key_value_states are provided this layer is used as a cross-attention layer
         # for the decoder
         is_cross_attention = key_value_states is not None
+        is_using_static_cache = isinstance(past_key_value, Cache)
+        sequence_length = cache_position[-1]
+
 
         bsz, tgt_len = hidden_states.shape[:2]
-        
+
         # get query proj
         query_states = self.q_proj(hidden_states) * self.scaling
         query_states = self._shape_query(query_states, tgt_len, bsz)
@@ -388,27 +392,71 @@ class ParlerTTSAttention(nn.Module):
 
         current_states = key_value_states if key_value_states is not None else hidden_states
 
+        reused_kv_cross = False
+
+        if is_using_static_cache and is_cross_attention:
+            reused_kv_cross = sequence_length > 0
+        else:
+            if past_key_value is not None and is_cross_attention:
+                reused_kv_cross = past_key_value[0].shape[2] == key_value_states.shape[1]
+
         # checking that the `sequence_length` of the `past_key_value` is the same as
         # the provided `key_value_states` to support prefix tuning
         if (
             is_cross_attention
             and past_key_value is not None
-            and past_key_value[0].shape[2] == key_value_states.shape[1]
+            and reused_kv_cross
         ):
             # reuse k,v, cross_attentions
-            key_states = past_key_value[0]
-            value_states = past_key_value[1]
+            sequence_length = past_key_value.get_seq_length(self.layer_idx)
+            if is_using_static_cache:
+                key_states = past_key_value.key_cache[self.layer_idx][:, :, :sequence_length,:]
+                value_states = past_key_value.value_cache[self.layer_idx][:, :, :sequence_length,:]
+            else:
+                key_states = past_key_value[0].transpose(1,2)
+                value_states = past_key_value[1].transpose(1,2)
         else:
             key_states = self._shape_key_value(self.k_proj(current_states), -1, bsz)
             value_states = self._shape_key_value(self.v_proj(current_states), -1, bsz)
             
             if not is_cross_attention:
                 # cached key states already have rope applied - only apply to new state
-                key_states = apply_rotary_pos_emb(key_states, cos, sin) if self.rope_embeddings else key_states
-
+                key_states = apply_rotary_pos_emb(key_states, cos, sin, unsqueeze_dim=2) if self.rope_embeddings else key_states
+                
                 if past_key_value is not None:
-                    key_states = torch.cat([past_key_value[0], key_states], dim=2)
-                    value_states = torch.cat([past_key_value[1], value_states], dim=2)
+                    if is_using_static_cache:
+
+                        cache_position = torch.arange(sequence_length, sequence_length + key_states.shape[2]).cuda()
+
+                        cache_kwargs = {
+                            "cache_position": cache_position
+                        }
+
+                        key_states, value_states = past_key_value.update(
+                            key_states=key_states,
+                            value_states=value_states,
+                            layer_idx=self.layer_idx,
+                            cache_kwargs=cache_kwargs
+                        )
+
+                        key_states = key_states[:, :, :sequence_length + cache_position.shape[0]]
+                        value_states = value_states[:, :, :sequence_length + cache_position.shape[0]]
+
+                    else:        
+                        key_states = torch.cat([past_key_value[0].transpose(1,2), key_states], dim=1)
+                        value_states = torch.cat([past_key_value[1].transpose(1,2), value_states], dim=1)
+            else:
+                cache_position = torch.arange(sequence_length, sequence_length + key_states.shape[2]).cuda()
+
+                cache_kwargs = {
+                    "cache_position": cache_position
+                }
+                _ = past_key_value.update(
+                    key_states=key_states,
+                    value_states=value_states,
+                    cache_kwargs=cache_kwargs,
+                    layer_idx=self.layer_idx
+                )
 
         if self.is_decoder:
             # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
@@ -976,7 +1024,7 @@ class ParlerTTSDecoderLayer(nn.Module):
 
         # Self Attention
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
-        if isinstance(past_key_value[0], Cache):
+        if isinstance(past_key_value, tuple) and isinstance(past_key_value[0], Cache):
             self_attn_past_key_value = past_key_value[0]
         else:
             self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
@@ -1010,7 +1058,7 @@ class ParlerTTSDecoderLayer(nn.Module):
             else:
                 cross_attn_past_key_value = past_key_value[-2:] if past_key_value is not None else None
 
-                
+
             hidden_states, cross_attn_weights, cross_attn_present_key_value = self.encoder_attn(
                 hidden_states=hidden_states,
                 key_value_states=encoder_hidden_states,
@@ -1395,7 +1443,7 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
             raise ValueError("You have to specify either decoder_input_ids or decoder_inputs_embeds")
 
         # past_key_values_length
-        if isinstance(past_key_values[0], Cache):
+        if isinstance(past_key_values, tuple) and isinstance(past_key_values[0], Cache):
             past_key_values_length = past_key_values[0].get_seq_length().item()
         else:
             past_key_values_length = past_key_values[0][0].shape[2] if past_key_values is not None else 0
@@ -1557,8 +1605,6 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                     use_cache,
                 )
             else:
-                # from torch.profiler import profile, record_function, ProfilerActivity
-                # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
                 layer_outputs = decoder_layer(
                         hidden_states,
                         attention_mask=attention_mask,
@@ -1574,10 +1620,7 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                         output_attentions=output_attentions,
                         use_cache=use_cache,
                         cache_position=cache_position
-                )
-                # prof.export_chrome_trace("static_cache_trace.json")
-
-                # exit()
+                    )
 
                 
             hidden_states = layer_outputs[0]
