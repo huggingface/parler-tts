@@ -302,6 +302,10 @@ class DataTrainingArguments:
         },
     )
     temporary_save_to_disk: str = field(default=None, metadata={"help": "Temporarily save audio labels here."})
+    save_codec_steps: Optional[int] = field(
+        default=500,
+        metadata={"help": "Temporarily save the audio labels every `save_steps`."},
+    )
     pad_to_multiple_of: Optional[int] = field(
         default=2,
         metadata={"help": ("Pad to multiple of for tokenizers.")},

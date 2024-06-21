@@ -239,7 +239,7 @@ def load_multiple_datasets(
                 #     metadata_dataset = metadata_dataset.map(concat_ids, input_columns=["book_id", "speaker_id", "begin_time"], num_proc=24)
                 #     metadata_dataset = metadata_dataset.rename_column(id_column_name, f"metadata_{id_column_name}")
 
-                if dataset_dict["name"] != "parler-tts/mls_eng_10k":
+                if dataset_dict["name"] not in {"parler-tts/mls_eng_10k", "parler-tts/mls_eng"}:
                     if id_column_name is not None and id_column_name not in dataset.column_names:
                         raise ValueError(
                             f"id_column_name={id_column_name} but has not been found in the dataset columns"
@@ -269,7 +269,7 @@ def load_multiple_datasets(
 
                 dataset = concatenate_datasets([dataset, metadata_dataset], axis=1)
 
-                if id_column_name is not None and dataset_dict["name"] != "parler-tts/mls_eng_10k":
+                if id_column_name is not None and dataset_dict["name"] not in {"parler-tts/mls_eng_10k", "parler-tts/mls_eng"}:
                     if (
                         len(
                             dataset.filter(

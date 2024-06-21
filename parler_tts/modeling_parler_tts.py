@@ -577,9 +577,8 @@ class ParlerTTSFlashAttention2(ParlerTTSAttention):
         # cast them back in the correct dtype just to be sure everything works as expected.
         # This might slowdown training & inference so it is recommended to not cast the LayerNorms
         # in fp32. (LlamaRMSNorm handles it correctly)
-
-        input_dtype = query_states.dtype
-        if input_dtype == torch.float32:
+            
+        if query_states.dtype == torch.float32 or value_states.dtype == torch.float32:
             if torch.is_autocast_enabled():
                 target_dtype = torch.get_autocast_gpu_dtype()
             # Handle the case where the model is quantized
