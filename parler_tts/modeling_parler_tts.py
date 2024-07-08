@@ -172,14 +172,10 @@ class ParlerTTSUnconditionalInput(ModelOutput):
         attention_mask (`torch.LongTensor`)  of shape `(batch_size, sequence_length)`, *optional*):
             Encoder attention mask to avoid performing attention on padding token indices. Mask values selected in `[0,
             1]`: 1 for tokens that are **not masked**, 0 for tokens that are **masked**.
-        guidance_scale (`float`, *optional*):
-            Guidance scale for classifier free guidance, setting the balance between the conditional logits (predicted
-            from the prompts) and the unconditional logits (predicted without prompts).
     """
 
     encoder_outputs: Tuple[torch.FloatTensor] = None
     attention_mask: torch.LongTensor = None
-    guidance_scale: float = None
 
 
 # Copied from transformers.models.encoder_decoder.modeling_encoder_decoder.shift_tokens_right
@@ -1744,7 +1740,6 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
         past_key_values=None,
         use_cache=True,
         delay_pattern_mask=None,
-        guidance_scale=None,
         **kwargs,
     ):
         if delay_pattern_mask is None:
@@ -1757,23 +1752,6 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
 
         # apply the delay pattern mask
         input_ids = self.apply_delay_pattern_mask(input_ids, delay_pattern_mask)
-
-        if guidance_scale is not None and guidance_scale > 1:
-            # for classifier free guidance we need to replicate the decoder args across the batch dim (we'll split these
-            # before sampling)
-            input_ids = input_ids.repeat((2, 1))
-            if attention_mask is not None:
-                attention_mask = attention_mask.repeat((2, 1))
-
-            if prompt_hidden_states is not None:
-                prompt_hidden_states = torch.concatenate(
-                    [prompt_hidden_states, torch.zeros_like(prompt_hidden_states)], dim=0
-                )
-
-            if prompt_attention_mask is not None:
-                prompt_attention_mask = torch.concatenate(
-                    [prompt_attention_mask, torch.zeros_like(prompt_attention_mask)], dim=0
-                )
 
         position_ids = kwargs.get("position_ids", None)
         if attention_mask is not None and position_ids is None:
@@ -1945,7 +1923,6 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
 
         # 4. Define other model kwargs
         model_kwargs["use_cache"] = generation_config.use_cache
-        model_kwargs["guidance_scale"] = generation_config.guidance_scale
 
         requires_attention_mask = "encoder_outputs" not in model_kwargs
         if model_kwargs.get("attention_mask", None) is None and requires_attention_mask:
@@ -2010,12 +1987,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
             and generation_config.do_sample is True
         )
 
-        # 8. prepare batched CFG externally (to enable coexistance with the unbatched CFG)
-        if generation_config.guidance_scale is not None and generation_config.guidance_scale > 1:
-            logits_processor.append(ClassifierFreeGuidanceLogitsProcessor(generation_config.guidance_scale))
-            generation_config.guidance_scale = None
-
-        # 9. prepare distribution pre_processing samplers
+        # 8. prepare distribution pre_processing samplers
         logits_processor = self._get_logits_processor(
             generation_config=generation_config,
             input_ids_seq_length=input_ids_seq_length,
@@ -2025,7 +1997,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
             device=input_ids.device,
         )
 
-        # 10. prepare stopping criteria
+        # 9. prepare stopping criteria
         stopping_criteria = self._get_stopping_criteria(
             generation_config=generation_config, stopping_criteria=stopping_criteria
         )
@@ -2037,7 +2009,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
                     f"but is {generation_config.num_return_sequences}."
                 )
 
-            # 11. run greedy search
+            # 10. run greedy search
             outputs = self._sample(
                 input_ids,
                 logits_processor=logits_processor,
@@ -2049,7 +2021,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
             )
 
         elif is_sample_gen_mode:
-            # 11. prepare logits warper
+            # 10. prepare logits warper
             logits_warper = self._get_logits_warper(generation_config, device=input_ids.device)
 
             # expand input_ids with `num_return_sequences` additional sequences per batch
@@ -2059,7 +2031,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
                 **model_kwargs,
             )
 
-            # 12. run sample
+            # 11. run sample
             outputs = self._sample(
                 input_ids,
                 logits_processor=logits_processor,
@@ -2675,7 +2647,6 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         use_cache=None,
         encoder_outputs=None,
         decoder_delay_pattern_mask=None,
-        guidance_scale=None,
         **kwargs,
     ):
         if decoder_delay_pattern_mask is None:
@@ -2688,17 +2659,6 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
 
         # apply the delay pattern mask
         decoder_input_ids = self.decoder.apply_delay_pattern_mask(decoder_input_ids, decoder_delay_pattern_mask)
-
-        if guidance_scale is not None and guidance_scale > 1:
-            # for classifier free guidance we need to replicate the decoder args across the batch dim (we'll split these
-            # before sampling)
-            decoder_input_ids = decoder_input_ids.repeat((2, 1))
-            if decoder_attention_mask is not None:
-                decoder_attention_mask = decoder_attention_mask.repeat((2, 1))
-            if prompt_hidden_states is not None:
-                prompt_hidden_states = prompt_hidden_states.repeat((2, 1, 1))
-            if prompt_attention_mask is not None:
-                prompt_attention_mask = prompt_attention_mask.repeat((2, 1))
 
         if past_key_values is not None:
             past_length = past_key_values[0][0].shape[2]
@@ -2807,21 +2767,12 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             }
         encoder_kwargs["output_attentions"] = generation_config.output_attentions
         encoder_kwargs["output_hidden_states"] = generation_config.output_hidden_states
-        guidance_scale = generation_config.guidance_scale
 
         # 3. make sure that encoder returns `ModelOutput`
         model_input_name = model_input_name if model_input_name is not None else self.text_encoder.main_input_name
         encoder_kwargs["return_dict"] = True
         encoder_kwargs[model_input_name] = inputs_tensor
         last_hidden_state = encoder(**encoder_kwargs).last_hidden_state
-
-        # for classifier free guidance we need to add a 'null' input to our encoder hidden states
-        if guidance_scale is not None and guidance_scale > 1:
-            last_hidden_state = torch.concatenate([last_hidden_state, torch.zeros_like(last_hidden_state)], dim=0)
-            if "attention_mask" in model_kwargs:
-                model_kwargs["attention_mask"] = torch.concatenate(
-                    [model_kwargs["attention_mask"], torch.zeros_like(model_kwargs["attention_mask"])], dim=0
-                )
 
         # we optionnally project last_hidden_state to avoid recomputing every time
         encoder_hidden_states = last_hidden_state
@@ -3100,7 +3051,6 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
 
         # 4. Define other model kwargs
         model_kwargs["use_cache"] = generation_config.use_cache
-        model_kwargs["guidance_scale"] = generation_config.guidance_scale
 
         requires_attention_mask = "encoder_outputs" not in model_kwargs
 
@@ -3194,12 +3144,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             and generation_config.do_sample is True
         )
 
-        # 8. prepare batched CFG externally (to enable coexistance with the unbatched CFG)
-        if generation_config.guidance_scale is not None and generation_config.guidance_scale > 1:
-            logits_processor.append(ClassifierFreeGuidanceLogitsProcessor(generation_config.guidance_scale))
-            generation_config.guidance_scale = None
-
-        # 9. prepare distribution pre_processing samplers
+        # 8. prepare distribution pre_processing samplers
         logits_processor = self._get_logits_processor(
             generation_config=generation_config,
             input_ids_seq_length=input_ids_seq_length,
@@ -3209,7 +3154,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             device=input_ids.device,
         )
 
-        # 10. prepare stopping criteria
+        # 9. prepare stopping criteria
         stopping_criteria = self._get_stopping_criteria(
             generation_config=generation_config, stopping_criteria=stopping_criteria
         )
@@ -3221,7 +3166,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                     f"but is {generation_config.num_return_sequences}."
                 )
 
-            # 11. run greedy search
+            # 10. run greedy search
             outputs = self._sample(
                 input_ids,
                 logits_processor=logits_processor,
@@ -3233,7 +3178,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             )
 
         elif is_sample_gen_mode:
-            # 11. prepare logits warper
+            # 10. prepare logits warper
             logits_warper = self._get_logits_warper(generation_config, device=input_ids.device)
 
             # expand input_ids with `num_return_sequences` additional sequences per batch
@@ -3244,7 +3189,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 **model_kwargs,
             )
 
-            # 12. run sample
+            # 11. run sample
             outputs = self._sample(
                 input_ids,
                 logits_processor=logits_processor,
