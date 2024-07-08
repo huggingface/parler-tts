@@ -30,6 +30,8 @@ class DataCollatorEncodecWithPadding:
         # different padding methods
         audios = [feature[self.audio_column_name]["array"] for feature in features]
         len_audio = [len(audio) for audio in audios]
+        if self.max_length is not None:
+            audios = [audio[:min(l, self.max_length)] for audio, l in zip(audios, len_audio)]
 
         # since resampling has already been performed in the 'load_multiple_datasets' function,
         # a fixed sampling_rate(44100hz) is passed to the feature_extractor.
@@ -81,7 +83,7 @@ class DataCollatorParlerTTSWithPadding:
         # (bsz, seq_len, num_codebooks)
         labels = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=-100)
         if self.audio_max_length is not None and self.padding == "max_length":
-            labels = torch.nn.functional.pad(labels, pad=(0, 0, 0, max(self.audio_max_length - labels.shape[1], 0)))
+            labels = torch.nn.functional.pad(labels, pad=(0, 0, 0, max(self.audio_max_length - labels.shape[1], 0)), value=-100)
 
         input_ids = [{"input_ids": feature["input_ids"]} for feature in features]
 
@@ -94,11 +96,6 @@ class DataCollatorParlerTTSWithPadding:
         )
 
         batch = {"labels": labels, **input_ids}
-
-        if self.audio_max_length is not None and self.padding == "max_length":
-            # if we do torch.compile, we need to also specify the attention_mask
-            decoder_attention_mask = torch.ones(labels.shape[:2], dtype=input_ids["attention_mask"].dtype)
-            batch["decoder_attention_mask"] = decoder_attention_mask
 
         prompt_input_ids = [{"input_ids": feature["prompt_input_ids"]} for feature in features]
         prompt_input_ids = self.prompt_tokenizer.pad(
@@ -206,7 +203,7 @@ def load_multiple_datasets(
     all_datasets = []
     # iterate over the datasets we want to interleave
     for dataset_dict in tqdm(dataset_names_dict, desc="Combining datasets..."):
-        with accelerator.main_process_first():
+        with accelerator.local_main_process_first():
             dataset = load_dataset(
                 dataset_dict["name"],
                 dataset_dict["config"],
@@ -242,7 +239,7 @@ def load_multiple_datasets(
                 #     metadata_dataset = metadata_dataset.map(concat_ids, input_columns=["book_id", "speaker_id", "begin_time"], num_proc=24)
                 #     metadata_dataset = metadata_dataset.rename_column(id_column_name, f"metadata_{id_column_name}")
 
-                if dataset_dict["name"] != "parler-tts/mls_eng_10k":
+                if dataset_dict["name"] not in {"parler-tts/mls_eng_10k", "parler-tts/mls_eng"}:
                     if id_column_name is not None and id_column_name not in dataset.column_names:
                         raise ValueError(
                             f"id_column_name={id_column_name} but has not been found in the dataset columns"
@@ -272,7 +269,7 @@ def load_multiple_datasets(
 
                 dataset = concatenate_datasets([dataset, metadata_dataset], axis=1)
 
-                if id_column_name is not None and dataset_dict["name"] != "parler-tts/mls_eng_10k":
+                if id_column_name is not None and dataset_dict["name"] not in {"parler-tts/mls_eng_10k", "parler-tts/mls_eng"}:
                     if (
                         len(
                             dataset.filter(
@@ -304,7 +301,7 @@ def load_multiple_datasets(
             seed=seed,
         )
     else:
-        with accelerator.main_process_first():
+        with accelerator.local_main_process_first():
             interleaved_dataset = concatenate_datasets(all_datasets)
 
     return interleaved_dataset

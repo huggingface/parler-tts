@@ -1,6 +1,7 @@
 import torch
 import evaluate
 from transformers import AutoModel, AutoProcessor, pipeline, WhisperForConditionalGeneration, WhisperTokenizer, WhisperTokenizerFast
+from accelerate.utils.memory import release_memory
 
 
 def clap_similarity(clap_model_name_or_path, texts, audios, device):
@@ -14,16 +15,18 @@ def clap_similarity(clap_model_name_or_path, texts, audios, device):
         )
         audio_features = clap.get_audio_features(clap_inputs["input_features"])
 
-        cosine_sim = torch.nn.functional.cosine_similarity(audio_features, text_features, dim=1, eps=1e-8)
+        cosine_sim = torch.nn.functional.cosine_similarity(audio_features, text_features, dim=1, eps=1e-8).mean()
+    
+    cosine_sim = cosine_sim.to("cpu")
 
     clap.to("cpu")
-    clap_inputs.to("cpu")
-    return cosine_sim.mean().to("cpu")
+    clap, clap_inputs, audio_features, text_features = release_memory(clap, clap_inputs, audio_features, text_features)
+    return cosine_sim
 
 
 def wer(asr_model_name_or_path, prompts, audios, device, per_device_eval_batch_size, sampling_rate):
     metric = evaluate.load("wer")
-    asr_pipeline = pipeline(model=asr_model_name_or_path, device=device)
+    asr_pipeline = pipeline(model=asr_model_name_or_path, device=device, chunk_length_s=25.0)
 
     return_language = None
     if isinstance(asr_pipeline.model, WhisperForConditionalGeneration):
@@ -47,7 +50,7 @@ def wer(asr_model_name_or_path, prompts, audios, device, per_device_eval_batch_s
     normalized_references = []
 
     for pred, ref in zip(transcriptions, prompts):
-        normalizer = english_normalizer if return_language and pred["chunks"][0]["language"] == "english" else basic_normalizer
+        normalizer = english_normalizer if isinstance(pred.get("chunks", None), list) and pred["chunks"][0].get("language", None) == "english" else basic_normalizer
         norm_ref = normalizer(ref)
         if len(norm_ref) > 0:
             norm_pred = normalizer(pred["text"])
@@ -55,5 +58,6 @@ def wer(asr_model_name_or_path, prompts, audios, device, per_device_eval_batch_s
             normalized_references.append(norm_ref)
 
     word_error = 100 * metric.compute(predictions=normalized_predictions, references=normalized_references)
-
+    asr_pipeline.model.to("cpu")
+    asr_pipeline = release_memory(asr_pipeline)
     return word_error, [t["text"] for t in transcriptions]

@@ -78,6 +78,18 @@ class ModelArguments:
             "help": "Used to compute audio similarity during evaluation. Path to pretrained model or model identifier from huggingface.co/models"
         },
     )
+    attn_implementation: str = field(
+        default="eager",
+        metadata={
+            "help": "Attention implementation used. One of `eager`, `sdpa`, `flash_attention_2`"
+        },
+    )
+    cross_attention_implementation_strategy: str = field(
+        default=None,
+        metadata={
+            "help": "If not specified, the cross-attention implementation will be the same as `_attn_implementation`. If `always_eager`, it will always be the eager implementation. If `always_sdpa`, it will always be the sdpa implementation."
+        },
+    )
 
 
 @dataclass
@@ -290,6 +302,10 @@ class DataTrainingArguments:
         },
     )
     temporary_save_to_disk: str = field(default=None, metadata={"help": "Temporarily save audio labels here."})
+    save_codec_steps: Optional[int] = field(
+        default=500,
+        metadata={"help": "Temporarily save the audio labels every `save_steps`."},
+    )
     pad_to_multiple_of: Optional[int] = field(
         default=2,
         metadata={"help": ("Pad to multiple of for tokenizers.")},
@@ -311,3 +327,7 @@ class ParlerTTSTrainingArguments(Seq2SeqTrainingArguments):
         default=8,
         metadata={"help": ("Specify the batch size of the audio encoding pre-processing steps.")},
     )
+    eval_dataloader_num_workers: Optional[int] = field(
+        default=0,
+        metadata={"help": ("Number of subprocesses to use for evaluation data loading (PyTorch only). 0 means that the data will be loaded in the main process.")},
+    )            

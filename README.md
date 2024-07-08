@@ -54,6 +54,16 @@ if torch.xpu.is_available():
 torch_dtype = torch.float16 if device != "cpu" else torch.float32
 
 model = ParlerTTSForConditionalGeneration.from_pretrained("parler-tts/parler_tts_mini_v0.1").to(device, dtype=torch_dtype)
+
+# # Use with flash attention
+# model = ParlerTTSForConditionalGeneration.from_pretrained(
+#     repo_id, attn_implementation="flash_attention_2", torch_dtype=torch.float16
+# ).to(device, dtype=torch_dtype)
+
+
+model = ParlerTTSForConditionalGeneration.from_pretrained("parler-tts/parler_tts_mini_v0.1").to(device, dtype=torch_dtype)
+
+
 tokenizer = AutoTokenizer.from_pretrained("parler-tts/parler_tts_mini_v0.1")
 
 prompt = "Hey, how are you doing today?"
