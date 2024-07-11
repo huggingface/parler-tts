@@ -758,8 +758,6 @@ class ParlerTTSFlashAttention2(ParlerTTSAttention):
                 )
 
                 if past_key_value is not None:
-                    print(f"Has KV Cache")
-
                     if is_using_static_cache:
 
                         cache_position = torch.arange(
@@ -790,8 +788,6 @@ class ParlerTTSFlashAttention2(ParlerTTSAttention):
                         value_states = torch.cat(
                             [past_key_value[1].transpose(1, 2), value_states], dim=1
                         )
-
-                        print("Normal KV Cache")
 
             else:
                 if is_using_static_cache:
