@@ -1660,12 +1660,13 @@ class ParlerTTSModel(ParlerTTSPreTrainedModel):
         prompt_attention_mask: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.Tensor] = None,
         cross_attn_head_mask: Optional[torch.Tensor] = None,
-        past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
+        past_key_values: Optional[Union[EncoderDecoderCache, Tuple[torch.FloatTensor]]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, BaseModelOutputWithPastAndCrossAttentions]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -1691,6 +1692,7 @@ class ParlerTTSModel(ParlerTTSPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            cache_position=cache_position,
         )
 
         if not return_dict:
@@ -1761,6 +1763,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithCrossAttentions]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length, num_codebooks)`, *optional*):
@@ -1788,6 +1791,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            cache_position=cache_position,
         )
 
         hidden_states = outputs[0]
@@ -1848,6 +1852,8 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
         past_key_values=None,
         use_cache=True,
         delay_pattern_mask=None,
+        cache_position=None,
+        inputs_embeds=None,
         **kwargs,
     ):
         if delay_pattern_mask is None:
@@ -1876,7 +1882,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
             prompt_hidden_states = None
 
         return {
-            "input_ids": input_ids,
+            "input_ids": input_ids.contiguous(),
             "attention_mask": attention_mask,
             "position_ids": position_ids,
             "encoder_hidden_states": encoder_hidden_states,
@@ -1887,6 +1893,8 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
             "cross_attn_head_mask": cross_attn_head_mask,
             "past_key_values": past_key_values,
             "use_cache": use_cache,
+            "cache_position": cache_position,
+            "inputs_embeds": inputs_embeds
         }
 
     # Ignore copy
