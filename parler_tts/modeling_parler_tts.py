@@ -830,7 +830,7 @@ PARLERTTS_ATTENTION_CLASSES = {
 }
 
 class ParlerTTSDecoderLayer(nn.Module):
-    def __init__(self, config: ParlerTTSDecoderConfig):
+    def __init__(self, config: ParlerTTSDecoderConfig, layer_idx: int = None):
         super().__init__()
         self.embed_dim = config.hidden_size
 
@@ -843,6 +843,7 @@ class ParlerTTSDecoderLayer(nn.Module):
             is_causal=True,
             bias=False,
             rope_embeddings=config.rope_embeddings,
+            layer_idx=layer_idx,
             config=config,
         )
         self.dropout = config.dropout
@@ -863,6 +864,7 @@ class ParlerTTSDecoderLayer(nn.Module):
             is_decoder=True,
             bias=False,
             rope_embeddings=config.rope_embeddings,
+            layer_idx=layer_idx,
             config=config,
         )
         self.encoder_attn_layer_norm = nn.LayerNorm(self.embed_dim)
@@ -880,9 +882,10 @@ class ParlerTTSDecoderLayer(nn.Module):
         encoder_attention_mask: Optional[torch.Tensor] = None,
         layer_head_mask: Optional[torch.Tensor] = None,
         cross_attn_layer_head_mask: Optional[torch.Tensor] = None,
-        past_key_value: Optional[Tuple[torch.Tensor]] = None,
+        past_key_value: Optional[EncoderDecoderCache] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = True,
+        cache_position: Optional[torch.LongTensor] = None,
     ) -> torch.Tensor:
         """
         Args:
@@ -909,32 +912,24 @@ class ParlerTTSDecoderLayer(nn.Module):
         hidden_states = self.self_attn_layer_norm(hidden_states)
 
         # Self Attention
-        # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
-        self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
-        # add present self-attn cache to positions 1,2 of present_key_value tuple
-
-
         hidden_states, self_attn_weights, present_key_value = self.self_attn(
             hidden_states=hidden_states,
-            past_key_value=self_attn_past_key_value,
+            past_key_value=past_key_value,
             attention_mask=attention_mask,
             cos=cos,
             sin=sin,
             layer_head_mask=layer_head_mask,
             output_attentions=output_attentions,
+            cache_position=cache_position,
         )
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
         hidden_states = residual + hidden_states
 
         # Cross-Attention Block
-        cross_attn_present_key_value = None
         cross_attn_weights = None
         if encoder_hidden_states is not None:
             residual = hidden_states
             hidden_states = self.encoder_attn_layer_norm(hidden_states)
-
-            # cross_attn cached key/values tuple is at positions 3,4 of present_key_value tuple
-            cross_attn_past_key_value = past_key_value[-2:] if past_key_value is not None else None
             hidden_states, cross_attn_weights, cross_attn_present_key_value = self.encoder_attn(
                 hidden_states=hidden_states,
                 key_value_states=encoder_hidden_states,
@@ -942,14 +937,14 @@ class ParlerTTSDecoderLayer(nn.Module):
                 cos=cos,
                 sin=sin,
                 layer_head_mask=cross_attn_layer_head_mask,
-                past_key_value=cross_attn_past_key_value,
+                past_key_value=past_key_value,
                 output_attentions=output_attentions,
             )
             hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
             hidden_states = residual + hidden_states
 
-            # add cross-attn to positions 3,4 of present_key_value tuple
-            present_key_value = present_key_value + cross_attn_present_key_value
+            # add cross-attn to positions 1 of present_key_value tuple
+            present_key_value = (present_key_value, cross_attn_present_key_value)
 
         # Fully Connected
         residual = hidden_states
