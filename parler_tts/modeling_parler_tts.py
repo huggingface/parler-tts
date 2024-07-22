@@ -2896,6 +2896,16 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 )
                 model_kwargs["decoder_attention_mask"] = decoder_attention_mask
 
+        if not self.prompt_cross_attention:
+            prompt_hidden_states = model_kwargs["prompt_hidden_states"]
+            num_codebooks = self.decoder.num_codebooks
+            input = decoder_input_ids.reshape(-1, num_codebooks, decoder_input_ids.shape[-1])
+            inputs_embeds = sum(
+                [self.decoder.model.decoder.embed_tokens[codebook](input[:, codebook]) for codebook in range(num_codebooks)]
+            )
+            inputs_embeds = torch.cat([prompt_hidden_states, inputs_embeds], dim=1)
+            model_kwargs["inputs_embeds"] = inputs_embeds
+            
         return decoder_input_ids, model_kwargs
 
     def _prepare_text_encoder_kwargs_for_generation(
