@@ -26,9 +26,20 @@ from torch.nn import CrossEntropyLoss
 from transformers import AutoConfig, AutoModel, AutoModelForTextEncoding
 from transformers.activations import ACT2FN
 from transformers.generation.configuration_utils import GenerationConfig
-from transformers.generation.logits_process import ClassifierFreeGuidanceLogitsProcessor, LogitsProcessorList
 from transformers.generation.stopping_criteria import StoppingCriteriaList
-from transformers.modeling_attn_mask_utils import _prepare_4d_attention_mask, _prepare_4d_causal_attention_mask, _prepare_4d_attention_mask_for_sdpa, _prepare_4d_causal_attention_mask_for_sdpa
+from transformers.modeling_attn_mask_utils import _prepare_4d_attention_mask, _prepare_4d_attention_mask_for_sdpa, AttentionMaskConverter
+from transformers.generation.logits_process import ClassifierFreeGuidanceLogitsProcessor, LogitsProcessorList
+from transformers.cache_utils import (
+    Cache,
+    DynamicCache,
+    EncoderDecoderCache,
+    HQQQuantizedCache,
+    HybridCache,
+    QuantizedCacheConfig,
+    QuantoQuantizedCache,
+    SlidingWindowCache,
+    StaticCache,
+)
 from transformers.modeling_outputs import (
     BaseModelOutput,
     BaseModelOutputWithPastAndCrossAttentions,
@@ -42,6 +53,8 @@ from transformers.utils import (
     add_start_docstrings_to_model_forward,
     logging,
     replace_return_docstrings,
+    is_hqq_available,
+    is_quanto_available,
 )
 import torch.nn.functional as F
 from transformers.utils.import_utils import is_flash_attn_greater_or_equal_2_10, is_flash_attn_2_available
@@ -74,6 +87,9 @@ MUSICGEN_PRETRAINED_MODEL_ARCHIVE_LIST = [
     # See all ParlerTTS models at https://huggingface.co/models?filter=parler_tts
 ]
 
+
+NEED_SETUP_CACHE_CLASSES_MAPPING = {"static": StaticCache, "sliding_window": SlidingWindowCache, "hybrid": HybridCache}
+QUANT_BACKEND_CLASSES_MAPPING = {"quanto": QuantoQuantizedCache, "HQQ": HQQQuantizedCache}
 
 def apply_delay_pattern_mask(input_ids, decoder_pad_token_mask):
     """Apply a delay pattern mask to the decoder input ids, only preserving predictions where
