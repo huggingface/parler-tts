@@ -2203,6 +2203,9 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
     supports_gradient_checkpointing = True
     _supports_flash_attn_2 = True
     _supports_sdpa = True
+    _supports_cache_class = True
+    _supports_static_cache = True
+    
 
     def __init__(
         self,
@@ -2580,7 +2583,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         decoder_input_ids: Optional[torch.LongTensor] = None,
         decoder_attention_mask: Optional[torch.BoolTensor] = None,
         encoder_outputs: Optional[Tuple[torch.FloatTensor]] = None,
-        past_key_values: Tuple[Tuple[torch.FloatTensor]] = None,
+        past_key_values: Optional[Union[EncoderDecoderCache, Tuple[torch.FloatTensor]]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         decoder_inputs_embeds: Optional[torch.FloatTensor] = None,
         prompt_input_ids: Optional[torch.FloatTensor] = None,
@@ -2592,6 +2595,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
     ) -> Union[Tuple, Seq2SeqLMOutput]:
         r"""
@@ -2731,6 +2735,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             past_key_values=past_key_values,
             return_dict=return_dict,
             labels=labels,
+            cache_position=cache_position,
             **kwargs_decoder,
         )
 
