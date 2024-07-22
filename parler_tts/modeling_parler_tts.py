@@ -3409,6 +3409,81 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 f" {generation_config.max_length}. This can lead to unexpected behavior. You should consider"
                 " increasing `max_new_tokens`."
             )
+        
+        use_dynamic_cache_by_default = False
+        if generation_config.cache_implementation is not None and model_kwargs.get("past_key_values") is not None:
+            raise ValueError(
+                "Passing both `cache_implementation` (used to initialize certain caches) and `past_key_values` (a "
+                "Cache object) is unsupported. Please use only one of the two."
+            )
+        elif generation_config.cache_implementation is not None:
+            if generation_config.cache_implementation in NEED_SETUP_CACHE_CLASSES_MAPPING:
+                if generation_config.cache_implementation == "static" and not self._supports_static_cache:
+                    raise ValueError(
+                        "This model does not support `cache_implementation='static'`. Please check the following "
+                        "issue: https://github.com/huggingface/transformers/issues/28981"
+                    )
+                if not self.prompt_cross_attention:
+                    # when we prepend prompt_hidden_state to inputs_embeds, max_cache_len needs to be actualised
+                    # generation_config.max_length has already been increased by input_ids_seq_length which is
+                    # already counted in input_embeds_seq_length so we remove it
+                    input_embeds_seq_length = model_kwargs["inputs_embeds"].shape[1]
+                    max_cache_len = generation_config.max_length + input_embeds_seq_length - input_ids_seq_length
+                else:
+                    max_cache_len = self.generation_config.max_length
+                model_kwargs["past_key_values"] = self._get_cache(
+                    generation_config.cache_implementation,
+                    getattr(generation_config, "num_beams", 1) * batch_size,
+                    max_cache_len,
+                    model_kwargs,
+                )
+            elif generation_config.cache_implementation == "quantized":
+                if not self._supports_quantized_cache:
+                    raise ValueError(
+                        "This model does not support the quantized cache. If you want your model to support quantized "
+                        "cache, please open an issue."
+                    )
+
+                cache_config = (
+                    generation_config.cache_config
+                    if generation_config.cache_config is not None
+                    else QuantizedCacheConfig()
+                )
+                cache_class = QUANT_BACKEND_CLASSES_MAPPING[cache_config.backend]
+
+                if cache_config.backend == "quanto" and not is_quanto_available():
+                    raise ImportError(
+                        "You need to install `quanto` in order to use KV cache quantization with quanto backend. "
+                        "Please install it via  with `pip install quanto`"
+                    )
+                elif cache_config.backend == "HQQ" and not is_hqq_available():
+                    raise ImportError(
+                        "You need to install `HQQ` in order to use KV cache quantization with HQQ backend. "
+                        "Please install it via  with `pip install hqq`"
+                    )
+
+                model_kwargs["past_key_values"] = cache_class(cache_config)
+        # Use DynamicCache() instance by default. This will avoid back and forth from legacy format that
+        # keeps copying the cache thus using much more memory
+        elif generation_config.cache_implementation is None and self._supports_default_dynamic_cache():
+            past = model_kwargs.get("past_key_values", None)
+            requires_cross_attention_cache = (
+                self.config.is_encoder_decoder or model_kwargs.get("encoder_outputs") is not None
+            )
+            if past is None:
+                model_kwargs["past_key_values"] = (
+                    DynamicCache()
+                    if not requires_cross_attention_cache
+                    else EncoderDecoderCache(DynamicCache(), DynamicCache())
+                )
+                use_dynamic_cache_by_default = True
+            elif isinstance(past, tuple):
+                model_kwargs["past_key_values"] = (
+                    DynamicCache.from_legacy_cache(past)
+                    if not requires_cross_attention_cache
+                    else EncoderDecoderCache.from_legacy_cache(past)
+                )
+                use_dynamic_cache_by_default = True
 
         # build the delay pattern mask for offsetting each codebook prediction by 1 (this behaviour is specific to Parler-TTS)
         input_ids, decoder_delay_pattern_mask = self.decoder.build_delay_pattern_mask(
