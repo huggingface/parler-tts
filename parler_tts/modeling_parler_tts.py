@@ -1260,8 +1260,9 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                 max_position_embeddings=config.max_position_embeddings,
                 base=config.rope_theta,
             )
-
-        self.layers = nn.ModuleList([ParlerTTSDecoderLayer(config) for _ in range(config.num_hidden_layers)])
+        self.layers = nn.ModuleList(
+            [ParlerTTSDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
+        )
         self.layer_norm = nn.LayerNorm(config.hidden_size)
         self.attn_implementation = config._attn_implementation
         encoder_attn_implementation = config._attn_implementation
@@ -1296,6 +1297,7 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        cache_position=None,
     ) -> Union[Tuple, BaseModelOutputWithPastAndCrossAttentions]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -1318,15 +1320,47 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
         else:
             raise ValueError("You have to specify either decoder_input_ids or decoder_inputs_embeds")
 
-        # past_key_values_length
-        past_key_values_length = past_key_values[0][0].shape[2] if past_key_values is not None else 0
-
         if inputs_embeds is None:
             inputs_embeds = sum([self.embed_tokens[codebook](input[:, codebook]) for codebook in range(num_codebooks)])
 
         # if prompt_hidden_states, fuse to inputs_embeds and update input shape
         if prompt_hidden_states is not None:
             inputs_embeds = torch.cat([prompt_hidden_states, inputs_embeds], dim=1)
+            # this step is done at first generation step
+            # cache_position is initialized in _get_initial_cache_position (GenerationMixin method),
+            # yet this method is called before this one. 
+            # It is thus necessary to hardcode cache_position to the correct value after prepending prompt_hidden_states 
+            cur_len = inputs_embeds.shape[1]
+            cache_position = torch.arange(0, cur_len, device=input_ids.device)
+
+        return_legacy_cache = False
+        return_self_attention_cache = False
+        if use_cache or past_key_values is not None:
+            if isinstance(past_key_values, Cache) and not isinstance(past_key_values, EncoderDecoderCache):
+                return_self_attention_cache = True
+                past_key_values = EncoderDecoderCache(past_key_values, DynamicCache())
+            elif not isinstance(past_key_values, EncoderDecoderCache):
+                return_legacy_cache = True
+                logger.warning_once(
+                    "Passing a tuple of `past_key_values` is deprecated and will be removed in Transformers v4.43.0. "
+                    "You should pass an instance of `EncoderDecoderCache` instead, e.g. "
+                    "`past_key_values=EncoderDecoderCache.from_legacy_cache(past_key_values)`."
+                )
+                past_key_values = EncoderDecoderCache.from_legacy_cache(past_key_values)
+
+        past_key_values_length = 0
+        if cache_position is not None:
+            past_key_values_length = cache_position[0]
+        elif past_key_values is not None:
+            past_key_values_length = past_key_values.get_seq_length()
+
+        if cache_position is None:
+            cache_position = torch.arange(
+                past_key_values_length, past_key_values_length + input_shape[1], device=inputs_embeds.device
+            )
+
+        if position_ids is None:
+            position_ids = cache_position.unsqueeze(0)
 
         # NOTE: 1. As it is, the masked ids from the prompt will still count in the positions embeddings
         # NOTE: 2. we want to concatenate the prompt attention mask and the decoder attention mask
@@ -1335,9 +1369,6 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
         if prompt_attention_mask is not None and attention_mask is not None:
             attention_mask = torch.cat([prompt_attention_mask, attention_mask], dim=1)
         elif prompt_attention_mask is not None:
-            logger.warning_once(
-                "`prompt_attention_mask` is specified but `attention_mask` is not. A full `attention_mask` will be created. Make sure this is the intended behaviour."
-            )
             if past_key_values is None:
                 attention_mask = torch.cat(
                     [
@@ -1395,24 +1426,14 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
 
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
 
+        causal_mask = self._update_causal_mask(
+            attention_mask,
+            inputs_embeds,
+            cache_position,
+            past_key_values.self_attention_cache if past_key_values is not None else None,
+            output_attentions,
+        )
 
-        if self.attn_implementation == "flash_attention_2":
-            attention_mask = attention_mask if (attention_mask is not None and 0 in attention_mask) else None
-        elif self.attn_implementation == "sdpa" and head_mask is None and not output_attentions:
-            # output_attentions=True & cross_attn_head_mask can not be supported when using SDPA, and we fall back on
-            # the manual implementation that requires a 4D causal mask in all cases.
-            attention_mask = _prepare_4d_causal_attention_mask_for_sdpa(
-                attention_mask,
-                input_shape,
-                inputs_embeds,
-                past_key_values_length,
-            )
-        else:
-            attention_mask = _prepare_4d_causal_attention_mask(
-                attention_mask, input_shape, inputs_embeds, past_key_values_length
-            )
-
-        # expand encoder attention mask
         if encoder_hidden_states is not None and encoder_attention_mask is not None:
             if self.encoder_attn_implementation == "flash_attention_2":
                 encoder_attention_mask = encoder_attention_mask if 0 in encoder_attention_mask else None
@@ -1437,12 +1458,10 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                     "`use_cache=True` is incompatible with gradient checkpointing`. Setting `use_cache=False`..."
                 )
                 use_cache = False
-
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
         all_cross_attentions = () if (output_attentions and encoder_hidden_states is not None) else None
-        next_decoder_cache = () if use_cache else None
 
         # check if head_mask/cross_attn_head_mask has a correct number of layers specified if desired
         for attn_mask, mask_name in zip([head_mask, cross_attn_head_mask], ["head_mask", "cross_attn_head_mask"]):
@@ -1460,13 +1479,11 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
             if self.training and (dropout_probability < self.layerdrop):
                 continue
 
-            past_key_value = past_key_values[idx] if past_key_values is not None else None
-
             if self.gradient_checkpointing and self.training:
                 layer_outputs = self._gradient_checkpointing_func(
                     decoder_layer.forward,
                     hidden_states,
-                    attention_mask,
+                    causal_mask,
                     cos,
                     sin,
                     encoder_hidden_states,
@@ -1476,11 +1493,12 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                     None,
                     output_attentions,
                     use_cache,
+                    cache_position,
                 )
             else:
                 layer_outputs = decoder_layer(
                     hidden_states,
-                    attention_mask=attention_mask,
+                    attention_mask=causal_mask,
                     cos=cos,
                     sin=sin,
                     encoder_hidden_states=encoder_hidden_states,
@@ -1489,14 +1507,12 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                     cross_attn_layer_head_mask=(
                         cross_attn_head_mask[idx] if cross_attn_head_mask is not None else None
                     ),
-                    past_key_value=past_key_value,
+                    past_key_value=past_key_values if use_cache else None,
                     output_attentions=output_attentions,
                     use_cache=use_cache,
+                    cache_position=cache_position,
                 )
             hidden_states = layer_outputs[0]
-
-            if use_cache:
-                next_decoder_cache += (layer_outputs[3 if output_attentions else 1],)
 
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
@@ -1510,7 +1526,11 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
-        next_cache = next_decoder_cache if use_cache else None
+        next_cache = past_key_values if use_cache else None
+        if return_self_attention_cache:
+            next_cache = past_key_values.self_attention_cache
+        if return_legacy_cache:
+            next_cache = past_key_values.to_legacy_cache()
         if not return_dict:
             return tuple(
                 v
@@ -1524,6 +1544,87 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
             attentions=all_self_attns,
             cross_attentions=all_cross_attentions,
         )
+    
+# Copied from transformers.models.llama.modeling_llama.LlamaModel._update_causal_mask
+    def _update_causal_mask(
+        self,
+        attention_mask: torch.Tensor,
+        input_tensor: torch.Tensor,
+        cache_position: torch.Tensor,
+        past_key_values: Cache,
+        output_attentions: bool,
+    ):
+        # TODO: As of torch==2.2.0, the `attention_mask` passed to the model in `generate` is 2D and of dynamic length even when the static
+        # KV cache is used. This is an issue for torch.compile which then recaptures cudagraphs at each decode steps due to the dynamic shapes.
+        # (`recording cudagraph tree for symint key 13`, etc.), which is VERY slow. A workaround is `@torch.compiler.disable`, but this prevents using
+        # `fullgraph=True`. See more context in https://github.com/huggingface/transformers/pull/29114
+
+        if self.config._attn_implementation == "flash_attention_2":
+            if attention_mask is not None and 0.0 in attention_mask:
+                return attention_mask
+            return None
+
+        # For SDPA, when possible, we will rely on its `is_causal` argument instead of its `attn_mask` argument, in
+        # order to dispatch on Flash Attention 2. This feature is not compatible with static cache, as SDPA will fail
+        # to infer the attention mask.
+        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+        using_static_cache = isinstance(past_key_values, StaticCache)
+
+        # When output attentions is True, sdpa implementation's forward method calls the eager implementation's forward
+        if self.config._attn_implementation == "sdpa" and not using_static_cache and not output_attentions:
+            if AttentionMaskConverter._ignore_causal_mask_sdpa(
+                attention_mask,
+                inputs_embeds=input_tensor,
+                past_key_values_length=past_seen_tokens,
+                is_training=self.training,
+            ):
+                return None
+
+        dtype, device = input_tensor.dtype, input_tensor.device
+        min_dtype = torch.finfo(dtype).min
+        sequence_length = input_tensor.shape[1]
+        if using_static_cache:
+            target_length = past_key_values.get_max_length()
+        else:
+            target_length = (
+                attention_mask.shape[-1]
+                if isinstance(attention_mask, torch.Tensor)
+                else past_seen_tokens + sequence_length + 1
+            )
+
+        if attention_mask is not None and attention_mask.dim() == 4:
+            # in this case we assume that the mask comes already in inverted form and requires no inversion or slicing
+            if attention_mask.max() != 0:
+                raise ValueError("Custom 4D attention mask should be passed in inverted form with max==0`")
+            causal_mask = attention_mask
+        else:
+            causal_mask = torch.full(
+                (sequence_length, target_length), fill_value=min_dtype, dtype=dtype, device=device
+            )
+            if sequence_length != 1:
+                causal_mask = torch.triu(causal_mask, diagonal=1)
+            causal_mask *= torch.arange(target_length, device=device) > cache_position.reshape(-1, 1)
+            causal_mask = causal_mask[None, None, :, :].expand(input_tensor.shape[0], 1, -1, -1)
+            if attention_mask is not None:
+                causal_mask = causal_mask.clone()  # copy to contiguous memory for in-place edit
+                mask_length = attention_mask.shape[-1]
+                padding_mask = causal_mask[:, :, :, :mask_length] + attention_mask[:, None, None, :]
+                padding_mask = padding_mask == 0
+                causal_mask[:, :, :, :mask_length] = causal_mask[:, :, :, :mask_length].masked_fill(
+                    padding_mask, min_dtype
+                )
+        if (
+            self.config._attn_implementation == "sdpa"
+            and attention_mask is not None
+            and attention_mask.device.type == "cuda"
+            and not output_attentions
+        ):
+            # Attend to all tokens in fully masked rows in the causal_mask, for example the relevant first rows when
+            # using left padding. This is required by F.scaled_dot_product_attention memory-efficient attention path.
+            # Details: https://github.com/pytorch/pytorch/issues/110213
+            causal_mask = AttentionMaskConverter._unmask_unattended(causal_mask, min_dtype)
+
+        return causal_mask
 
 
 @add_start_docstrings(
