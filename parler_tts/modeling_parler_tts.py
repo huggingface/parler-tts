@@ -2768,6 +2768,8 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         use_cache=None,
         encoder_outputs=None,
         decoder_delay_pattern_mask=None,
+        cache_position=None,
+        inputs_embeds=None,
         **kwargs,
     ):
         if decoder_delay_pattern_mask is None:
@@ -2781,9 +2783,18 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         # apply the delay pattern mask
         decoder_input_ids = self.decoder.apply_delay_pattern_mask(decoder_input_ids, decoder_delay_pattern_mask)
 
+        past_length = 0
         if past_key_values is not None:
-            past_length = past_key_values[0][0].shape[2]
-
+            if isinstance(past_key_values, EncoderDecoderCache):
+                past_length = cache_position[0] if cache_position is not None else past_key_values.get_seq_length()
+                if past_key_values.get_seq_length() > 0:
+                    # we only want to use prompt signal in the 1st generation step
+                    prompt_hidden_states = None 
+            else:
+                past_length = past_key_values[0][0].shape[2]
+                # we only want to use prompt signal in the 1st generation step
+                prompt_hidden_states = None
+        
             # Some generation methods already pass only the last input ID
             if decoder_input_ids.shape[1] > past_length:
                 remove_prefix_length = past_length
@@ -2792,16 +2803,42 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 remove_prefix_length = decoder_input_ids.shape[1] - 1
 
             decoder_input_ids = decoder_input_ids[:, remove_prefix_length:]
+        
+        if cache_position is None:
+            cache_position = torch.arange(
+                past_length, past_length + decoder_input_ids.shape[1], device=decoder_input_ids.device
+            )
+        elif use_cache:
+            cache_position = cache_position[-decoder_input_ids.shape[1] :]
+        
+        if decoder_attention_mask is None and prompt_attention_mask is not None:
+            input = decoder_input_ids.reshape(-1, self.decoder.num_codebooks, decoder_input_ids.shape[-1])
+            bsz, _, seq_len = input.shape
+            input_shape = (bsz, seq_len)
 
-            # if prompt_cross_attention,
-            # we only want to use prompt signal in the 1st generation step
-            prompt_hidden_states = None
+            past_key_values_length = 0
+            if cache_position is not None:
+                past_key_values_length = cache_position[0]
+            elif past_key_values is not None:
+                past_key_values_length = past_key_values.get_seq_length()
+
+            logger.warning_once(
+                "`prompt_attention_mask` is specified but `attention_mask` is not. A full `attention_mask` will be created. Make sure this is the intended behaviour."
+            )
+            if past_key_values is None or (isinstance(past_key_values, EncoderDecoderCache) and past_key_values.get_seq_length() == 0):
+                decoder_attention_mask = torch.ones(input_shape, device=self.device, dtype=decoder_input_ids.dtype)
+            elif prompt_attention_mask is not None:
+                # In the generation case of `prompt_cross_attention=True`, we need to recreate an attention mask from scratch
+                # to be able to prepend the prompt attention mask.
+                # Since we generate token per token, we can recompute the generated length from the information we have.
+                generated_length = past_key_values_length - prompt_attention_mask.shape[1] + 1
+                decoder_attention_mask = torch.ones((input_shape[0], generated_length), device=self.device, dtype=prompt_attention_mask.dtype)
 
         return {
             "input_ids": None,  # encoder_outputs is defined. input_ids not needed
             "encoder_outputs": encoder_outputs,
             "past_key_values": past_key_values,
-            "decoder_input_ids": decoder_input_ids,
+            "decoder_input_ids": decoder_input_ids.contiguous(),
             "attention_mask": attention_mask,
             "decoder_attention_mask": decoder_attention_mask,
             "head_mask": head_mask,
@@ -2810,6 +2847,8 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             "prompt_hidden_states": prompt_hidden_states,
             "prompt_attention_mask": prompt_attention_mask,
             "use_cache": use_cache,
+            "cache_position": cache_position,
+            "inputs_embeds": inputs_embeds
         }
 
     def _prepare_decoder_input_ids_for_generation(
