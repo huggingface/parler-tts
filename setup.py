@@ -17,7 +17,7 @@ import setuptools
 
 
 _deps = [
-    "transformers>=4.39.0",
+    "transformers @ git+https://github.com/huggingface/transformers@72fb02c47dbbe1999ae105319f24631cad6e2e00",
     "torch",
     "sentencepiece",
     "descript-audio-codec",
@@ -60,7 +60,7 @@ setuptools.setup(
     packages=setuptools.find_packages(),
     install_requires=_deps,
     extras_require={
-        "dev": [_extras_dev_deps],
-        "train": [_extras_training_deps],
+        "dev": _extras_dev_deps,
+        "train": _extras_training_deps,
     },
 )
