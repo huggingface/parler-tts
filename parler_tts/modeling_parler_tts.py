@@ -565,10 +565,6 @@ class ParlerTTSFlashAttention2(ParlerTTSAttention):
         key_states = key_states.transpose(1, 2)
         value_states = value_states.transpose(1, 2)
 
-        causal_mask = attention_mask
-        if attention_mask is not None:  # no matter the length, we just slice it
-            causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
-
         # In PEFT, usually we cast the layer norms in float32 for training stability reasons
         # therefore the input hidden states gets silently casted in float32. Hence, we need
         # cast them back in the correct dtype just to be sure everything works as expected.
@@ -595,7 +591,7 @@ class ParlerTTSFlashAttention2(ParlerTTSAttention):
             value_states = value_states.to(target_dtype)
 
         attn_output = self._flash_attention_forward(
-            query_states, key_states, value_states, causal_mask, tgt_len, dropout=self.dropout
+            query_states, key_states, value_states, attention_mask, tgt_len, dropout=self.dropout
         )
 
         attn_output = attn_output.reshape(bsz, tgt_len, -1)
