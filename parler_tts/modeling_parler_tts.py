@@ -1314,12 +1314,6 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
         # if prompt_hidden_states, fuse to inputs_embeds and update input shape
         if prompt_hidden_states is not None:
             inputs_embeds = torch.cat([prompt_hidden_states, inputs_embeds], dim=1)
-            # this step is done at first generation step
-            # cache_position is initialized in _get_initial_cache_position (GenerationMixin method),
-            # yet this method is called before this one. 
-            # It is thus necessary to hardcode cache_position to the correct value after prepending prompt_hidden_states 
-            cur_len = inputs_embeds.shape[1]
-            cache_position = torch.arange(0, cur_len, device=input_ids.device)
 
         return_legacy_cache = False
         return_self_attention_cache = False
@@ -2797,7 +2791,12 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 past_length, past_length + decoder_input_ids.shape[1], device=decoder_input_ids.device
             )
         elif use_cache:
-            cache_position = cache_position[-decoder_input_ids.shape[1] :]
+            cur_len = decoder_input_ids.shape[1]
+            if prompt_hidden_states is not None and not self.prompt_cross_attention:
+                # meaning we are in 1st generation step and prompt_hidden_state will be prepended
+                cur_len += prompt_hidden_states.shape[1]
+
+            cache_position = cache_position[-cur_len :]
         
         if decoder_attention_mask is None and prompt_attention_mask is not None:
             input = decoder_input_ids.reshape(-1, self.decoder.num_codebooks, decoder_input_ids.shape[-1])
