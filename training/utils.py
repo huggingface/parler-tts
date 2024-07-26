@@ -134,6 +134,7 @@ def log_pred(
     pred_prompts: List[str],
     transcriptions: List[str],
     audios: List[torch.Tensor],
+    si_sdr_measures: List[float],
     sampling_rate: int,
     step: int,
     prefix: str = "eval",
@@ -146,16 +147,28 @@ def log_pred(
         cur_step_pretty = f"{int(step // 1000)}k" if step > 1000 else step
         prefix_pretty = prefix.replace("/", "-")
 
-        # convert str data to a wandb compatible format
-        str_data = [[pred_descriptions[i], pred_prompts[i], transcriptions[i]] for i in range(len(pred_descriptions))]
-        # log as a table with the appropriate headers
-        wandb_tracker.log_table(
-            table_name=f"predictions/{prefix_pretty}-step-{cur_step_pretty}",
-            columns=["Target descriptions", "Target prompts", "Predicted transcriptions"],
-            data=str_data[:num_lines],
-            step=step,
-            commit=False,
-        )
+        if si_sdr_measures is None:
+            # convert str data to a wandb compatible format
+            str_data = [[pred_descriptions[i], pred_prompts[i], transcriptions[i]] for i in range(len(pred_descriptions))]
+            # log as a table with the appropriate headers
+            wandb_tracker.log_table(
+                table_name=f"predictions/{prefix_pretty}-step-{cur_step_pretty}",
+                columns=["Target descriptions", "Target prompts", "Predicted transcriptions"],
+                data=str_data[:num_lines],
+                step=step,
+                commit=False,
+            )
+        else:
+            # convert str data to a wandb compatible format
+            str_data = [[pred_descriptions[i], pred_prompts[i], transcriptions[i], si_sdr_measures[i]] for i in range(len(pred_descriptions))]
+            # log as a table with the appropriate headers
+            wandb_tracker.log_table(
+                table_name=f"predictions/{prefix_pretty}-step-{cur_step_pretty}",
+                columns=["Target descriptions", "Target prompts", "Predicted transcriptions", "Noise estimation"],
+                data=str_data[:num_lines],
+                step=step,
+                commit=False,
+            )
 
         # wandb can only loads 100 audios per step
         wandb_tracker.log(
