@@ -905,7 +905,7 @@ def main():
 
     def generate_step(batch, accelerator):
         batch.pop("decoder_attention_mask", None)
-        eval_model = accelerator.unwrap_model(model, keep_fp32_wrapper=True) # (attn_implementation!="flash_attention_2"))
+        eval_model = accelerator.unwrap_model(model, keep_fp32_wrapper=True)
         if training_args.torch_compile:
             # if the model is compiled, we use the original model bc compile is not compatible with .generate
             eval_model = model._orig_mod
