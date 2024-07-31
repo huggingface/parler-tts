@@ -2,18 +2,31 @@ import torch
 from torchaudio.pipelines import SQUIM_OBJECTIVE
 import torchaudio
 import evaluate
-from transformers import AutoModel, AutoProcessor, pipeline, WhisperForConditionalGeneration, WhisperTokenizer, WhisperTokenizerFast
+from transformers import (
+    AutoModel,
+    AutoProcessor,
+    pipeline,
+    WhisperForConditionalGeneration,
+    WhisperTokenizer,
+    WhisperTokenizerFast,
+)
 from accelerate.utils.memory import release_memory
 import numpy as np
+
 
 def clap_similarity(clap_model_name_or_path, texts, audios, device, input_sampling_rate=44100):
     clap = AutoModel.from_pretrained(clap_model_name_or_path)
     clap_processor = AutoProcessor.from_pretrained(clap_model_name_or_path)
     output_sampling_rate = clap_processor.feature_extractor.sampling_rate
     if input_sampling_rate != output_sampling_rate:
-        audios = [torchaudio.functional.resample(torch.from_numpy(audio), input_sampling_rate, output_sampling_rate).numpy() for audio in audios]
-    clap_inputs = clap_processor(text=texts, audios=audios, padding=True, return_tensors="pt", sampling_rate=output_sampling_rate).to(device)
-    
+        audios = [
+            torchaudio.functional.resample(torch.from_numpy(audio), input_sampling_rate, output_sampling_rate).numpy()
+            for audio in audios
+        ]
+    clap_inputs = clap_processor(
+        text=texts, audios=audios, padding=True, return_tensors="pt", sampling_rate=output_sampling_rate
+    ).to(device)
+
     clap.to(device)
     with torch.no_grad():
         text_features = clap.get_text_features(
@@ -22,7 +35,7 @@ def clap_similarity(clap_model_name_or_path, texts, audios, device, input_sampli
         audio_features = clap.get_audio_features(clap_inputs["input_features"])
 
         cosine_sim = torch.nn.functional.cosine_similarity(audio_features, text_features, dim=1, eps=1e-8).mean()
-    
+
     cosine_sim = cosine_sim.to("cpu")
 
     clap.to("cpu")
@@ -36,11 +49,16 @@ def si_sdr(audios, device, input_sampling_rate=44100):
 
     output_sampling_rate = SQUIM_OBJECTIVE.sample_rate
     if input_sampling_rate != output_sampling_rate:
-        audios = [torchaudio.functional.resample(torch.tensor(audio)[None, :].to(device).float(), input_sampling_rate, output_sampling_rate) for audio in audios]
+        audios = [
+            torchaudio.functional.resample(
+                torch.tensor(audio)[None, :].to(device).float(), input_sampling_rate, output_sampling_rate
+            )
+            for audio in audios
+        ]
 
     def apply_squim(waveform):
         with torch.no_grad():
-            waveform = waveform[:, :min(max_audio_length, waveform.shape[1])]
+            waveform = waveform[:, : min(max_audio_length, waveform.shape[1])]
             _, _, sdr_sample = model(waveform)
             sdr_sample = sdr_sample.cpu()[0]
         return sdr_sample
@@ -50,8 +68,16 @@ def si_sdr(audios, device, input_sampling_rate=44100):
     return si_sdrs
 
 
-
-def wer(asr_model_name_or_path, prompts, audios, device, per_device_eval_batch_size, sampling_rate, noise_level_to_compute_clean_wer, si_sdr_measures):
+def wer(
+    asr_model_name_or_path,
+    prompts,
+    audios,
+    device,
+    per_device_eval_batch_size,
+    sampling_rate,
+    noise_level_to_compute_clean_wer,
+    si_sdr_measures,
+):
     metric = evaluate.load("wer")
     asr_pipeline = pipeline(model=asr_model_name_or_path, device=device, chunk_length_s=25.0)
 
@@ -77,7 +103,11 @@ def wer(asr_model_name_or_path, prompts, audios, device, per_device_eval_batch_s
     normalized_references = []
 
     for pred, ref in zip(transcriptions, prompts):
-        normalizer = english_normalizer if isinstance(pred.get("chunks", None), list) and pred["chunks"][0].get("language", None) == "english" else basic_normalizer
+        normalizer = (
+            english_normalizer
+            if isinstance(pred.get("chunks", None), list) and pred["chunks"][0].get("language", None) == "english"
+            else basic_normalizer
+        )
         norm_ref = normalizer(ref)
         if len(norm_ref) > 0:
             norm_pred = normalizer(pred["text"])
@@ -85,7 +115,7 @@ def wer(asr_model_name_or_path, prompts, audios, device, per_device_eval_batch_s
             normalized_references.append(norm_ref)
 
     word_error = 100 * metric.compute(predictions=normalized_predictions, references=normalized_references)
-    
+
     clean_word_error = None
     noisy_word_error = None
     percent_clean_samples = 0
@@ -93,10 +123,14 @@ def wer(asr_model_name_or_path, prompts, audios, device, per_device_eval_batch_s
         si_sdr_measures = np.array(si_sdr_measures)
         mask = si_sdr_measures >= noise_level_to_compute_clean_wer
         if mask.any():
-            clean_word_error = 100 * metric.compute(predictions=np.array(normalized_predictions)[mask], references=np.array(normalized_references)[mask])
-            noisy_word_error = 100 * metric.compute(predictions=np.array(normalized_predictions)[~mask], references=np.array(normalized_references)[~mask])
+            clean_word_error = 100 * metric.compute(
+                predictions=np.array(normalized_predictions)[mask], references=np.array(normalized_references)[mask]
+            )
+            noisy_word_error = 100 * metric.compute(
+                predictions=np.array(normalized_predictions)[~mask], references=np.array(normalized_references)[~mask]
+            )
             percent_clean_samples = mask.sum() / len(mask)
-    
+
     asr_pipeline.model.to("cpu")
     asr_pipeline = release_memory(asr_pipeline)
     return word_error, [t["text"] for t in transcriptions], clean_word_error, noisy_word_error, percent_clean_samples

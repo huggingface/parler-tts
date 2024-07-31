@@ -80,9 +80,7 @@ class ModelArguments:
     )
     attn_implementation: str = field(
         default="eager",
-        metadata={
-            "help": "Attention implementation used. One of `eager`, `sdpa`, `flash_attention_2`"
-        },
+        metadata={"help": "Attention implementation used. One of `eager`, `sdpa`, `flash_attention_2`"},
     )
     cross_attention_implementation_strategy: str = field(
         default=None,
@@ -92,9 +90,11 @@ class ModelArguments:
     )
     prompt_padding_side: Optional[str] = field(
         default="left",
-        metadata={"help": "Prompt tokenizer padding side. Defaults to `left`. If the prompt is pre-pended to the codebooks hidden states, it should be padded on the left."},
+        metadata={
+            "help": "Prompt tokenizer padding side. Defaults to `left`. If the prompt is pre-pended to the codebooks hidden states, it should be padded on the left."
+        },
     )
-    
+
 
 @dataclass
 class DataTrainingArguments:
@@ -333,7 +333,11 @@ class ParlerTTSTrainingArguments(Seq2SeqTrainingArguments):
     )
     eval_dataloader_num_workers: Optional[int] = field(
         default=0,
-        metadata={"help": ("Number of subprocesses to use for evaluation data loading (PyTorch only). 0 means that the data will be loaded in the main process.")},
+        metadata={
+            "help": (
+                "Number of subprocesses to use for evaluation data loading (PyTorch only). 0 means that the data will be loaded in the main process."
+            )
+        },
     )
     compute_clap_similarity_metric: bool = field(
         default=True,
@@ -345,11 +349,7 @@ class ParlerTTSTrainingArguments(Seq2SeqTrainingArguments):
     )
     compute_noise_level_metric: bool = field(
         default=True,
-        metadata={
-            "help": (
-                "Whether or not to compute the squim si-sdr measure of the generations."
-            )
-        },
+        metadata={"help": ("Whether or not to compute the squim si-sdr measure of the generations.")},
     )
     noise_level_to_compute_clean_wer: float = field(
         default=25,

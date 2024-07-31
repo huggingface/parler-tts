@@ -52,7 +52,15 @@ from parler_tts import (
     build_delay_pattern_mask,
 )
 
-from training.utils import get_last_checkpoint, rotate_checkpoints, log_pred, log_metric, load_all_codec_checkpoints, save_codec_checkpoint, get_last_codec_checkpoint_step
+from training.utils import (
+    get_last_checkpoint,
+    rotate_checkpoints,
+    log_pred,
+    log_metric,
+    load_all_codec_checkpoints,
+    save_codec_checkpoint,
+    get_last_codec_checkpoint_step,
+)
 from training.arguments import ModelArguments, DataTrainingArguments, ParlerTTSTrainingArguments
 from training.data import load_multiple_datasets, DataCollatorParlerTTSWithPadding, DataCollatorEncodecWithPadding
 from training.eval import clap_similarity, wer, si_sdr
@@ -299,7 +307,13 @@ def main():
     )
 
     # update pad token id and decoder_start_token_id
-    config.decoder.update({"cross_attention_implementation_strategy": model_args.cross_attention_implementation_strategy if model_args.cross_attention_implementation_strategy is not None else None})
+    config.decoder.update(
+        {
+            "cross_attention_implementation_strategy": model_args.cross_attention_implementation_strategy
+            if model_args.cross_attention_implementation_strategy is not None
+            else None
+        }
+    )
     config.update(
         {
             "pad_token_id": model_args.pad_token_id if model_args.pad_token_id is not None else config.pad_token_id,
@@ -418,7 +432,7 @@ def main():
             output["len_audio"] = len_audio
             # (1, bsz, codebooks, seq_len) -> (bsz, seq_len, codebooks)
             output["labels"] = labels.squeeze(0).transpose(1, 2)
-            
+
             # if `pad_to_max_length`, the maximum corresponding audio length of the current batch is max_duration*sampling_rate
             max_length = len_audio.max() if padding != "max_length" else max_target_length
             output["ratio"] = torch.ones_like(len_audio) * labels.shape[-1] / max_length
@@ -426,7 +440,7 @@ def main():
 
         # (1, codebooks, seq_len) where seq_len=1
         bos_labels = torch.ones((1, num_codebooks, 1)) * audio_encoder_bos_token_id
-        
+
         def postprocess_dataset(labels):
             # (1, codebooks, seq_len)
             labels = torch.tensor(labels).unsqueeze(0)
@@ -454,7 +468,7 @@ def main():
             # we also remove the last timestampts (full of PAD)
             output = {"labels": labels[:, 1:]}
             return output
-   
+
         for split in vectorized_datasets:
             data_loader = DataLoader(
                 raw_datasets[split],
@@ -465,7 +479,7 @@ def main():
             )
             data_loader = accelerator.prepare(data_loader)
             total_inference_steps = len(data_loader)
-            
+
             start_step = get_last_codec_checkpoint_step(os.path.join(data_args.temporary_save_to_disk, split))
             accelerator.wait_for_everyone()
             if start_step > 0:
@@ -477,7 +491,7 @@ def main():
             all_generated_labels = []
             all_lens = []
             if start_step < total_inference_steps:
-                for (i, batch) in enumerate(tqdm(data_loader, disable=not accelerator.is_local_main_process)):
+                for i, batch in enumerate(tqdm(data_loader, disable=not accelerator.is_local_main_process)):
                     cur_step = start_step + i
                     generate_labels = apply_audio_decoder(batch)
                     generate_labels = accelerator.pad_across_processes(generate_labels, dim=1, pad_index=0)
@@ -491,8 +505,10 @@ def main():
 
                         all_generated_labels.extend(lab)
                         all_lens.extend(lens)
-                        
-                        if ((cur_step+1) % data_args.save_codec_steps == 0) or (cur_step == total_inference_steps - 1):
+
+                        if ((cur_step + 1) % data_args.save_codec_steps == 0) or (
+                            cur_step == total_inference_steps - 1
+                        ):
                             tmp_labels = Dataset.from_dict({"labels": all_generated_labels, "target_length": all_lens})
                             tmp_labels = tmp_labels.map(
                                 postprocess_dataset,
@@ -500,13 +516,15 @@ def main():
                                 input_columns=["labels"],
                                 desc="Postprocessing labeling",
                             )
-                            save_codec_checkpoint(os.path.join(data_args.temporary_save_to_disk, split), tmp_labels, cur_step)
+                            save_codec_checkpoint(
+                                os.path.join(data_args.temporary_save_to_disk, split), tmp_labels, cur_step
+                            )
                             all_generated_labels = []
                             all_lens = []
-                        
+
                 accelerator.wait_for_everyone()
-                
-            if accelerator.is_main_process and len(all_generated_labels) > 0:                
+
+            if accelerator.is_main_process and len(all_generated_labels) > 0:
                 tmp_labels = Dataset.from_dict({"labels": all_generated_labels, "target_length": all_lens})
                 tmp_labels = tmp_labels.map(
                     postprocess_dataset,
@@ -523,7 +541,9 @@ def main():
             accelerator.wait_for_everyone()
 
             with accelerator.local_main_process_first():
-                tmp_labels = load_all_codec_checkpoints(os.path.join(data_args.temporary_save_to_disk, split)).select(range(len(vectorized_datasets[split])))
+                tmp_labels = load_all_codec_checkpoints(os.path.join(data_args.temporary_save_to_disk, split)).select(
+                    range(len(vectorized_datasets[split]))
+                )
                 logger.info(f"Concatenating {split}: {tmp_labels} with {vectorized_datasets[split]}")
                 vectorized_datasets[split] = concatenate_datasets([vectorized_datasets[split], tmp_labels], axis=1)
 
@@ -582,7 +602,7 @@ def main():
                 input_columns=["target_length"],
             )
         audio_max_length = max([len(l[0]) for l in max_sample["labels"]])
-        
+
     if description_column_name is not None and data_args.max_description_token_length is not None:
         with accelerator.local_main_process_first():
             # filter description that is shorter than max_text_length
@@ -629,7 +649,15 @@ def main():
     # 6. Next, we can prepare the training.
 
     # Let's use word CLAP similary and WER metrics as our evaluation metrics,
-    def compute_metrics(audios, descriptions, prompts, device="cpu", compute_clap_similarity_metric=False, compute_noise_level_metric=False, noise_level_to_compute_clean_wer=None):
+    def compute_metrics(
+        audios,
+        descriptions,
+        prompts,
+        device="cpu",
+        compute_clap_similarity_metric=False,
+        compute_noise_level_metric=False,
+        noise_level_to_compute_clean_wer=None,
+    ):
         results = {}
         input_ids = descriptions
         texts = description_tokenizer.batch_decode(input_ids, skip_special_tokens=True)
@@ -637,9 +665,11 @@ def main():
         audios = [a.float().cpu().numpy() for a in audios]
 
         if compute_clap_similarity_metric:
-            clap_score = clap_similarity(model_args.clap_model_name_or_path, texts, audios, device, input_sampling_rate=sampling_rate)
+            clap_score = clap_similarity(
+                model_args.clap_model_name_or_path, texts, audios, device, input_sampling_rate=sampling_rate
+            )
             results["clap"] = clap_score
-            
+
         si_sdr_measures = None
         if compute_noise_level_metric:
             si_sdr_measures = si_sdr(audios, device, input_sampling_rate=sampling_rate)
@@ -847,7 +877,11 @@ def main():
                     config.text_encoder.hidden_size != config.decoder.hidden_size
                     and config.decoder.cross_attention_hidden_size is None
                 ):
-                    encoder_hidden_states = model.enc_to_dec_proj(encoder_hidden_states) if training_args.parallel_mode.value != "distributed" else model.module.enc_to_dec_proj(encoder_hidden_states)
+                    encoder_hidden_states = (
+                        model.enc_to_dec_proj(encoder_hidden_states)
+                        if training_args.parallel_mode.value != "distributed"
+                        else model.module.enc_to_dec_proj(encoder_hidden_states)
+                    )
 
                 if batch.get("attention_mask", None) is not None:
                     encoder_hidden_states = encoder_hidden_states * batch.get("attention_mask", None)[..., None]
@@ -887,14 +921,17 @@ def main():
                     config.text_encoder.hidden_size != config.decoder.hidden_size
                     and config.decoder.cross_attention_hidden_size is None
                 ):
-                    encoder_hidden_states = model.enc_to_dec_proj(encoder_hidden_states) if training_args.parallel_mode.value != "distributed" else model.module.enc_to_dec_proj(encoder_hidden_states)
+                    encoder_hidden_states = (
+                        model.enc_to_dec_proj(encoder_hidden_states)
+                        if training_args.parallel_mode.value != "distributed"
+                        else model.module.enc_to_dec_proj(encoder_hidden_states)
+                    )
 
                 if batch.get("attention_mask", None) is not None:
                     encoder_hidden_states = encoder_hidden_states * batch.get("attention_mask", None)[..., None]
 
                 encoder_outputs.last_hidden_state = encoder_hidden_states
                 batch["encoder_outputs"] = encoder_outputs
-
 
         with torch.no_grad():
             outputs = eval_model(**batch)
@@ -910,7 +947,7 @@ def main():
             # if the model is compiled, we use the original model bc compile is not compatible with .generate
             eval_model = model._orig_mod
 
-        # since we've might have loaded the weights in fp32, we have to autocast to ensure FA2 weights are in half-precision.  
+        # since we've might have loaded the weights in fp32, we have to autocast to ensure FA2 weights are in half-precision.
         # with accelerator.autocast(autocast_handler=AutocastKwargs(enabled=(attn_implementation=="flash_attention_2"))):
         output_audios = eval_model.generate(**batch, **gen_kwargs)
         output_audios = accelerator.pad_across_processes(output_audios, dim=1, pad_index=0)
@@ -1066,16 +1103,28 @@ def main():
                     eval_time = time.time() - eval_start
                     # normalize eval metrics
                     eval_metrics = {
-                        key: torch.mean(torch.cat([d[key] for d in eval_metrics])).to("cpu")
-                        for key in eval_metrics[0]
+                        key: torch.mean(torch.cat([d[key] for d in eval_metrics])).to("cpu") for key in eval_metrics[0]
                     }
 
                     # compute metrics
                     metrics_desc = ""
                     if training_args.predict_with_generate:
                         if accelerator.is_local_main_process:
-                            metric_values, pred_descriptions, pred_prompts, audios, transcriptions, si_sdr_measures = compute_metrics(
-                                eval_preds, eval_descriptions, eval_prompts, accelerator.device, training_args.compute_clap_similarity_metric, training_args.compute_noise_level_metric, training_args.noise_level_to_compute_clean_wer
+                            (
+                                metric_values,
+                                pred_descriptions,
+                                pred_prompts,
+                                audios,
+                                transcriptions,
+                                si_sdr_measures,
+                            ) = compute_metrics(
+                                eval_preds,
+                                eval_descriptions,
+                                eval_prompts,
+                                accelerator.device,
+                                training_args.compute_clap_similarity_metric,
+                                training_args.compute_noise_level_metric,
+                                training_args.noise_level_to_compute_clean_wer,
                             )
                             eval_metrics.update(metric_values)
                             metrics_desc = " ".join([f"Eval {key}: {value} |" for key, value in metric_values.items()])
@@ -1110,7 +1159,9 @@ def main():
                     )
 
                     # release eval batch and relax metrics
-                    eval_metrics, eval_preds, eval_descriptions, eval_prompts, batch, eval_metric = release_memory(eval_metrics, eval_preds, eval_descriptions, eval_prompts, batch, eval_metric)
+                    eval_metrics, eval_preds, eval_descriptions, eval_prompts, batch, eval_metric = release_memory(
+                        eval_metrics, eval_preds, eval_descriptions, eval_prompts, batch, eval_metric
+                    )
                     if training_args.predict_with_generate:
                         generated_audios, input_ids, prompts = release_memory(generated_audios, input_ids, prompts)
 

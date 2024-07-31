@@ -9,6 +9,7 @@ import torch
 from wandb import Audio
 from datasets import load_from_disk, concatenate_datasets
 
+
 def list_field(default=None, metadata=None):
     return field(default_factory=lambda: default, metadata=metadata)
 
@@ -16,6 +17,7 @@ def list_field(default=None, metadata=None):
 _RE_CHECKPOINT = re.compile(r"^checkpoint-(\d+)-epoch-(\d+)$")
 CHECKPOINT_CODEC_PREFIX = "checkpoint"
 _RE_CODEC_CHECKPOINT = re.compile(r"^checkpoint-(\d+)$")
+
 
 def get_last_checkpoint(folder):
     content = os.listdir(folder)
@@ -66,9 +68,11 @@ def save_codec_checkpoint(output_dir, dataset, step):
     output_path = os.path.join(output_dir, checkpoint_path)
     dataset.save_to_disk(output_path)
 
+
 def load_codec_checkpoint(checkpoint_path):
     dataset = load_from_disk(checkpoint_path)
     return dataset
+
 
 def sorted_codec_checkpoints(output_dir=None) -> List[str]:
     """Helper function to sort saved checkpoints from oldest to newest."""
@@ -84,6 +88,7 @@ def sorted_codec_checkpoints(output_dir=None) -> List[str]:
     checkpoints_sorted = sorted(ordering_and_checkpoint_path)
     checkpoints_sorted = [checkpoint[1] for checkpoint in checkpoints_sorted]
     return checkpoints_sorted
+
 
 def load_all_codec_checkpoints(output_dir=None) -> List[str]:
     """Helper function to load and concat all checkpoints."""
@@ -101,12 +106,15 @@ def get_last_codec_checkpoint_step(folder) -> int:
     checkpoints = [path for path in content if _RE_CODEC_CHECKPOINT.search(path) is not None]
     if len(checkpoints) == 0:
         return 0
-    last_checkpoint = os.path.join(folder, max(checkpoints, key=lambda x: int(_RE_CODEC_CHECKPOINT.search(x).groups()[0])))
+    last_checkpoint = os.path.join(
+        folder, max(checkpoints, key=lambda x: int(_RE_CODEC_CHECKPOINT.search(x).groups()[0]))
+    )
     # Find num steps saved state string pattern
     pattern = r"checkpoint-(\d+)"
     match = re.search(pattern, last_checkpoint)
     cur_step = int(match.group(1))
     return cur_step
+
 
 def log_metric(
     accelerator,
@@ -149,7 +157,9 @@ def log_pred(
 
         if si_sdr_measures is None:
             # convert str data to a wandb compatible format
-            str_data = [[pred_descriptions[i], pred_prompts[i], transcriptions[i]] for i in range(len(pred_descriptions))]
+            str_data = [
+                [pred_descriptions[i], pred_prompts[i], transcriptions[i]] for i in range(len(pred_descriptions))
+            ]
             # log as a table with the appropriate headers
             wandb_tracker.log_table(
                 table_name=f"predictions/{prefix_pretty}-step-{cur_step_pretty}",
@@ -160,7 +170,10 @@ def log_pred(
             )
         else:
             # convert str data to a wandb compatible format
-            str_data = [[pred_descriptions[i], pred_prompts[i], transcriptions[i], si_sdr_measures[i]] for i in range(len(pred_descriptions))]
+            str_data = [
+                [pred_descriptions[i], pred_prompts[i], transcriptions[i], si_sdr_measures[i]]
+                for i in range(len(pred_descriptions))
+            ]
             # log as a table with the appropriate headers
             wandb_tracker.log_table(
                 table_name=f"predictions/{prefix_pretty}-step-{cur_step_pretty}",

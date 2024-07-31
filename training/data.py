@@ -31,7 +31,7 @@ class DataCollatorEncodecWithPadding:
         audios = [feature[self.audio_column_name]["array"] for feature in features]
         len_audio = [len(audio) for audio in audios]
         if self.max_length is not None:
-            audios = [audio[:min(l, self.max_length)] for audio, l in zip(audios, len_audio)]
+            audios = [audio[: min(l, self.max_length)] for audio, l in zip(audios, len_audio)]
 
         # since resampling has already been performed in the 'load_multiple_datasets' function,
         # a fixed sampling_rate(44100hz) is passed to the feature_extractor.
@@ -83,7 +83,9 @@ class DataCollatorParlerTTSWithPadding:
         # (bsz, seq_len, num_codebooks)
         labels = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=-100)
         if self.audio_max_length is not None and self.padding == "max_length":
-            labels = torch.nn.functional.pad(labels, pad=(0, 0, 0, max(self.audio_max_length - labels.shape[1], 0)), value=-100)
+            labels = torch.nn.functional.pad(
+                labels, pad=(0, 0, 0, max(self.audio_max_length - labels.shape[1], 0)), value=-100
+            )
 
         input_ids = [{"input_ids": feature["input_ids"]} for feature in features]
 
@@ -269,7 +271,10 @@ def load_multiple_datasets(
 
                 dataset = concatenate_datasets([dataset, metadata_dataset], axis=1)
 
-                if id_column_name is not None and dataset_dict["name"] not in {"parler-tts/mls_eng_10k", "parler-tts/mls_eng"}:
+                if id_column_name is not None and dataset_dict["name"] not in {
+                    "parler-tts/mls_eng_10k",
+                    "parler-tts/mls_eng",
+                }:
                     if (
                         len(
                             dataset.filter(
