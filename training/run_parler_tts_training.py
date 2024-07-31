@@ -42,7 +42,7 @@ from transformers.optimization import get_scheduler
 from transformers.utils import send_example_telemetry
 
 
-from accelerate import Accelerator
+from accelerate import Accelerator, skip_first_batches
 from accelerate.utils import set_seed, AutocastKwargs, InitProcessGroupKwargs, TorchDynamoPlugin
 from accelerate.utils.memory import release_memory
 
@@ -52,11 +52,18 @@ from parler_tts import (
     build_delay_pattern_mask,
 )
 
-from training.utils import get_last_checkpoint, rotate_checkpoints, log_pred, log_metric
+from training.utils import (
+    get_last_checkpoint,
+    rotate_checkpoints,
+    log_pred,
+    log_metric,
+    load_all_codec_checkpoints,
+    save_codec_checkpoint,
+    get_last_codec_checkpoint_step,
+)
 from training.arguments import ModelArguments, DataTrainingArguments, ParlerTTSTrainingArguments
 from training.data import load_multiple_datasets, DataCollatorParlerTTSWithPadding, DataCollatorEncodecWithPadding
-from training.eval import clap_similarity, wer
-
+from training.eval import clap_similarity, wer, si_sdr
 
 logger = logging.getLogger(__name__)
 
@@ -80,10 +87,13 @@ def main():
 
     if training_args.dtype == "float16":
         mixed_precision = "fp16"
+        torch_dtype = torch.float16
     elif training_args.dtype == "bfloat16":
         mixed_precision = "bf16"
+        torch_dtype = torch.bfloat16
     else:
         mixed_precision = "no"
+        torch_dtype = torch.float32
 
     if data_args.pad_to_max_length and (
         data_args.max_duration_in_seconds is None
@@ -97,7 +107,7 @@ def main():
     padding = "max_length" if data_args.pad_to_max_length else "longest"
 
     ####### A. Preparation
-    kwargs_handlers = [InitProcessGroupKwargs(timeout=timedelta(minutes=60))]
+    kwargs_handlers = [InitProcessGroupKwargs(timeout=timedelta(minutes=120))]
 
     accelerator = Accelerator(
         gradient_accumulation_steps=training_args.gradient_accumulation_steps,
@@ -192,7 +202,7 @@ def main():
         token=data_args.token,
         trust_remote_code=data_args.trust_remote_code,
         use_fast=model_args.use_fast_tokenizer,
-        padding_side="left",  # prompt has to be padded on the left bc it's preprend to codebooks hidden states
+        padding_side=model_args.prompt_padding_side,
     )
 
     # load description tokenizer
@@ -219,7 +229,8 @@ def main():
     # assume that the dataset has been saved to `save_to_disk` if the latter is not empty
     dataset_was_precomputed = len(os.listdir(data_args.save_to_disk)) > 0
     if dataset_was_precomputed:
-        vectorized_datasets = datasets.load_from_disk(data_args.save_to_disk)
+        with accelerator.local_main_process_first():
+            vectorized_datasets = datasets.load_from_disk(data_args.save_to_disk)
     else:
         raw_datasets = DatasetDict()
 
@@ -282,9 +293,10 @@ def main():
             )
 
             if data_args.max_eval_samples is not None:
-                raw_datasets["eval"] = (
-                    raw_datasets["eval"].shuffle(seed=training_args.seed).select(range(data_args.max_eval_samples))
-                )
+                with accelerator.local_main_process_first():
+                    raw_datasets["eval"] = (
+                        raw_datasets["eval"].shuffle(seed=training_args.seed).select(range(data_args.max_eval_samples))
+                    )
 
     # 3. Next, let's load the config.
     config = ParlerTTSConfig.from_pretrained(
@@ -295,6 +307,13 @@ def main():
     )
 
     # update pad token id and decoder_start_token_id
+    config.decoder.update(
+        {
+            "cross_attention_implementation_strategy": model_args.cross_attention_implementation_strategy
+            if model_args.cross_attention_implementation_strategy is not None
+            else None
+        }
+    )
     config.update(
         {
             "pad_token_id": model_args.pad_token_id if model_args.pad_token_id is not None else config.pad_token_id,
@@ -311,6 +330,7 @@ def main():
         config=config,
         token=data_args.token,
         trust_remote_code=data_args.trust_remote_code,
+        attn_implementation=model_args.attn_implementation,
     )
 
     # enable gradient checkpointing if necessary
@@ -336,11 +356,13 @@ def main():
     max_length = model.generation_config.max_length
     num_codebooks = model.decoder.config.num_codebooks
     bandwidth = model_args.bandwidth
+    attn_implementation = model_args.attn_implementation
 
     # Freeze Encoders
     model.freeze_encoders(model_args.freeze_text_encoder)
 
     # Test all gather - used for warmout and avoiding timeout
+    logger.debug(str(accelerator.process_index), main_process_only=False, in_order=True)
     test_tensor = torch.tensor([accelerator.process_index], device=accelerator.device)
     gathered_tensor = accelerator.gather(test_tensor)
     print("gathered_tensor", gathered_tensor)
@@ -349,7 +371,7 @@ def main():
     if not dataset_was_precomputed:
         # Filter on text length
         if description_column_name is not None and data_args.max_text_length is not None:
-            with accelerator.main_process_first():
+            with accelerator.local_main_process_first():
                 # filter description that is shorter than max_text_length
                 raw_datasets = raw_datasets.filter(
                     lambda x: len(x) < data_args.max_text_length,
@@ -367,7 +389,7 @@ def main():
 
             return batch
 
-        with accelerator.main_process_first():
+        with accelerator.local_main_process_first():
             # this is a trick to avoid to rewrite the entire audio column which takes ages
             vectorized_datasets = raw_datasets.map(
                 pass_through_processors,
@@ -410,7 +432,41 @@ def main():
             output["len_audio"] = len_audio
             # (1, bsz, codebooks, seq_len) -> (bsz, seq_len, codebooks)
             output["labels"] = labels.squeeze(0).transpose(1, 2)
-            output["ratio"] = torch.ones_like(len_audio) * labels.shape[-1] / len_audio.max()
+
+            # if `pad_to_max_length`, the maximum corresponding audio length of the current batch is max_duration*sampling_rate
+            max_length = len_audio.max() if padding != "max_length" else max_target_length
+            output["ratio"] = torch.ones_like(len_audio) * labels.shape[-1] / max_length
+            return output
+
+        # (1, codebooks, seq_len) where seq_len=1
+        bos_labels = torch.ones((1, num_codebooks, 1)) * audio_encoder_bos_token_id
+
+        def postprocess_dataset(labels):
+            # (1, codebooks, seq_len)
+            labels = torch.tensor(labels).unsqueeze(0)
+            # add bos
+            labels = torch.cat([bos_labels, labels], dim=-1)
+
+            labels, delay_pattern_mask = build_delay_pattern_mask(
+                labels,
+                bos_token_id=audio_encoder_bos_token_id,
+                pad_token_id=audio_encoder_eos_token_id,
+                max_length=labels.shape[-1] + num_codebooks,
+                num_codebooks=num_codebooks,
+            )
+
+            # the first ids of the delay pattern mask are precisely labels, we use the rest of the labels mask
+            # to take care of EOS
+            # we want labels to look like this:
+            #  - [B, a, b, E, E, E, E]
+            #  - [B, B, c, d, E, E, E]
+            #  - [B, B, B, e, f, E, E]
+            #  - [B, B, B, B, g, h, E]
+            labels = torch.where(delay_pattern_mask == -1, audio_encoder_eos_token_id, delay_pattern_mask)
+
+            # the first timestamp is associated to a row full of BOS, let's get rid of it
+            # we also remove the last timestampts (full of PAD)
+            output = {"labels": labels[:, 1:]}
             return output
 
         for split in vectorized_datasets:
@@ -422,79 +478,79 @@ def main():
                 pin_memory=True,
             )
             data_loader = accelerator.prepare(data_loader)
+            total_inference_steps = len(data_loader)
+
+            start_step = get_last_codec_checkpoint_step(os.path.join(data_args.temporary_save_to_disk, split))
+            accelerator.wait_for_everyone()
+            if start_step > 0:
+                logger.info(f"Resuming {split} from step {start_step}")
+                # efficiently skip the first n batches
+                start_step += 1
+                data_loader = skip_first_batches(data_loader, start_step)
 
             all_generated_labels = []
             all_lens = []
-            for batch in tqdm(data_loader, disable=not accelerator.is_local_main_process):
-                generate_labels = apply_audio_decoder(batch)
-                generate_labels = accelerator.pad_across_processes(generate_labels, dim=1, pad_index=0)
-                generate_labels = accelerator.gather_for_metrics(generate_labels)
+            if start_step < total_inference_steps:
+                for i, batch in enumerate(tqdm(data_loader, disable=not accelerator.is_local_main_process)):
+                    cur_step = start_step + i
+                    generate_labels = apply_audio_decoder(batch)
+                    generate_labels = accelerator.pad_across_processes(generate_labels, dim=1, pad_index=0)
+                    generate_labels = accelerator.gather_for_metrics(generate_labels)
 
-                if accelerator.is_main_process:
-                    lab = generate_labels["labels"].cpu().transpose(1, 2).to(torch.int16)
-                    rat = generate_labels["ratio"].cpu().squeeze()
-                    lens = generate_labels["len_audio"].cpu().squeeze()
-                    lab = [l[:, : int(ratio * length)] for (l, ratio, length) in zip(lab, rat, lens)]
+                    if accelerator.is_main_process:
+                        lab = generate_labels["labels"].cpu().transpose(1, 2).to(torch.int16)
+                        rat = generate_labels["ratio"].cpu().squeeze(1)
+                        lens = generate_labels["len_audio"].cpu().squeeze(1)
+                        lab = [l[:, : int(ratio * length)] for (l, ratio, length) in zip(lab, rat, lens)]
 
-                    all_generated_labels.extend(lab)
-                    all_lens.extend(lens)
+                        all_generated_labels.extend(lab)
+                        all_lens.extend(lens)
 
-            # (1, codebooks, seq_len) where seq_len=1
-            bos_labels = torch.ones((1, num_codebooks, 1)) * audio_encoder_bos_token_id
+                        if ((cur_step + 1) % data_args.save_codec_steps == 0) or (
+                            cur_step == total_inference_steps - 1
+                        ):
+                            tmp_labels = Dataset.from_dict({"labels": all_generated_labels, "target_length": all_lens})
+                            tmp_labels = tmp_labels.map(
+                                postprocess_dataset,
+                                num_proc=data_args.preprocessing_num_workers,  # this one is resource consuming if many processor.
+                                input_columns=["labels"],
+                                desc="Postprocessing labeling",
+                            )
+                            save_codec_checkpoint(
+                                os.path.join(data_args.temporary_save_to_disk, split), tmp_labels, cur_step
+                            )
+                            all_generated_labels = []
+                            all_lens = []
 
-            if accelerator.is_main_process:
+                accelerator.wait_for_everyone()
+
+            if accelerator.is_main_process and len(all_generated_labels) > 0:
                 tmp_labels = Dataset.from_dict({"labels": all_generated_labels, "target_length": all_lens})
-                tmp_labels.save_to_disk(
-                    os.path.join(data_args.temporary_save_to_disk, split),
-                    num_proc=1 if split == "eval" else data_args.preprocessing_num_workers,
-                )
-            accelerator.wait_for_everyone()
-            del all_generated_labels
-
-            tmp_labels = datasets.load_from_disk(os.path.join(data_args.temporary_save_to_disk, split))
-            with accelerator.main_process_first():
-                vectorized_datasets[split] = concatenate_datasets([vectorized_datasets[split], tmp_labels], axis=1)
-
-            def postprocess_dataset(labels):
-                # (1, codebooks, seq_len)
-                labels = torch.tensor(labels).unsqueeze(0)
-                # add bos
-                labels = torch.cat([bos_labels, labels], dim=-1)
-
-                labels, delay_pattern_mask = build_delay_pattern_mask(
-                    labels,
-                    bos_token_id=audio_encoder_bos_token_id,
-                    pad_token_id=audio_encoder_eos_token_id,
-                    max_length=labels.shape[-1] + num_codebooks,
-                    num_codebooks=num_codebooks,
-                )
-
-                # the first ids of the delay pattern mask are precisely labels, we use the rest of the labels mask
-                # to take care of EOS
-                # we want labels to look like this:
-                #  - [B, a, b, E, E, E, E]
-                #  - [B, B, c, d, E, E, E]
-                #  - [B, B, B, e, f, E, E]
-                #  - [B, B, B, B, g, h, E]
-                labels = torch.where(delay_pattern_mask == -1, audio_encoder_eos_token_id, delay_pattern_mask)
-
-                # the first timestamp is associated to a row full of BOS, let's get rid of it
-                # we also remove the last timestampts (full of PAD)
-                output = {"labels": labels[:, 1:]}
-                return output
-
-            with accelerator.main_process_first():
-                vectorized_datasets[split] = vectorized_datasets[split].map(
+                tmp_labels = tmp_labels.map(
                     postprocess_dataset,
                     num_proc=data_args.preprocessing_num_workers,  # this one is resource consuming if many processor.
                     input_columns=["labels"],
                     desc="Postprocessing labeling",
                 )
+                save_codec_checkpoint(os.path.join(data_args.temporary_save_to_disk, split), tmp_labels, cur_step)
+                all_generated_labels = []
+                all_lens = []
+            accelerator.wait_for_everyone()
+
+            del all_generated_labels
+            accelerator.wait_for_everyone()
+
+            with accelerator.local_main_process_first():
+                tmp_labels = load_all_codec_checkpoints(os.path.join(data_args.temporary_save_to_disk, split)).select(
+                    range(len(vectorized_datasets[split]))
+                )
+                logger.info(f"Concatenating {split}: {tmp_labels} with {vectorized_datasets[split]}")
+                vectorized_datasets[split] = concatenate_datasets([vectorized_datasets[split], tmp_labels], axis=1)
 
         accelerator.free_memory()
         del generate_labels, all_lens
 
-        with accelerator.main_process_first():
+        with accelerator.local_main_process_first():
             # NOTE: filtering is done at the end because in the `datasets` library, caching audio files is done after most operations
             # caching audio files is time and disk-space consuming, so we want to avoid it at all costs, especially for large (>1Kh) audio datasets.
             # That's also why we avoid to concat the processed datasets (vectorized_datasets) with the audio column present in raw_datasets.
@@ -509,23 +565,23 @@ def main():
                 input_columns=["target_length"],
             )
 
-            if description_column_name is not None and data_args.max_description_token_length is not None:
-                with accelerator.main_process_first():
-                    # filter description that is shorter than max_text_length
-                    vectorized_datasets = vectorized_datasets.filter(
-                        lambda x: len(x) < data_args.max_description_token_length,
-                        num_proc=num_workers,
-                        input_columns=["input_ids"],
-                    )
+        if description_column_name is not None and data_args.max_description_token_length is not None:
+            with accelerator.local_main_process_first():
+                # filter description that is shorter than max_text_length
+                vectorized_datasets = vectorized_datasets.filter(
+                    lambda x: len(x) < data_args.max_description_token_length,
+                    num_proc=num_workers,
+                    input_columns=["input_ids"],
+                )
 
-            if data_args.max_prompt_token_length is not None:
-                with accelerator.main_process_first():
-                    # filter description that is shorter than max_text_length
-                    vectorized_datasets = vectorized_datasets.filter(
-                        lambda x: len(x) < data_args.max_prompt_token_length,
-                        num_proc=num_workers,
-                        input_columns=["prompt_input_ids"],
-                    )
+        if data_args.max_prompt_token_length is not None:
+            with accelerator.local_main_process_first():
+                # filter description that is shorter than max_text_length
+                vectorized_datasets = vectorized_datasets.filter(
+                    lambda x: len(x) < data_args.max_prompt_token_length,
+                    num_proc=num_workers,
+                    input_columns=["prompt_input_ids"],
+                )
 
     if data_args.save_to_disk is not None and not dataset_was_precomputed:
         if accelerator.is_main_process:
@@ -533,25 +589,44 @@ def main():
                 data_args.save_to_disk,
                 num_proc=min(data_args.preprocessing_num_workers, len(vectorized_datasets["eval"]) - 1),
             )
+        accelerator.wait_for_everyone()
         logger.info(f"Dataset saved at {data_args.save_to_disk}")
 
     audio_max_length = None
     if padding == "max_length":
         audio_max_length = max(vectorized_datasets["train"]["target_length"])
-        with accelerator.main_process_first():
+        with accelerator.local_main_process_first():
             max_sample = vectorized_datasets["train"].filter(
                 lambda x: x == audio_max_length,
                 num_proc=num_workers,
                 input_columns=["target_length"],
             )
-        audio_max_length = torch.tensor(max_sample[0]["labels"]).shape[1]
+        audio_max_length = max([len(l[0]) for l in max_sample["labels"]])
+
+    if description_column_name is not None and data_args.max_description_token_length is not None:
+        with accelerator.local_main_process_first():
+            # filter description that is shorter than max_text_length
+            vectorized_datasets = vectorized_datasets.filter(
+                lambda x: len(x) < data_args.max_description_token_length,
+                num_proc=num_workers,
+                input_columns=["input_ids"],
+            )
+
+    if data_args.max_prompt_token_length is not None:
+        with accelerator.local_main_process_first():
+            # filter description that is shorter than max_text_length
+            vectorized_datasets = vectorized_datasets.filter(
+                lambda x: len(x) < data_args.max_prompt_token_length,
+                num_proc=num_workers,
+                input_columns=["prompt_input_ids"],
+            )
 
     if training_args.group_by_length:
         # apply a simple heuristic to take into account audio and text lengths
         def add_target_lengths(target_length, prompt, description):
             return {"target_length": target_length + len(prompt) + len(description)}
 
-        with accelerator.main_process_first():
+        with accelerator.local_main_process_first():
             vectorized_datasets = vectorized_datasets.map(
                 add_target_lengths,
                 num_proc=num_workers,
@@ -574,27 +649,48 @@ def main():
     # 6. Next, we can prepare the training.
 
     # Let's use word CLAP similary and WER metrics as our evaluation metrics,
-    def compute_metrics(audios, descriptions, prompts, device="cpu"):
+    def compute_metrics(
+        audios,
+        descriptions,
+        prompts,
+        device="cpu",
+        compute_clap_similarity_metric=False,
+        compute_noise_level_metric=False,
+        noise_level_to_compute_clean_wer=None,
+    ):
         results = {}
         input_ids = descriptions
         texts = description_tokenizer.batch_decode(input_ids, skip_special_tokens=True)
         prompts = prompt_tokenizer.batch_decode(prompts, skip_special_tokens=True)
-        audios = [a.cpu().numpy() for a in audios]
+        audios = [a.float().cpu().numpy() for a in audios]
 
-        clap_score = clap_similarity(model_args.clap_model_name_or_path, texts, audios, device)
-        results["clap"] = clap_score
+        if compute_clap_similarity_metric:
+            clap_score = clap_similarity(
+                model_args.clap_model_name_or_path, texts, audios, device, input_sampling_rate=sampling_rate
+            )
+            results["clap"] = clap_score
 
-        word_error, transcriptions = wer(
+        si_sdr_measures = None
+        if compute_noise_level_metric:
+            si_sdr_measures = si_sdr(audios, device, input_sampling_rate=sampling_rate)
+
+        word_error, transcriptions, clean_word_error, noisy_word_error, percent_clean_samples = wer(
             model_args.asr_model_name_or_path,
             prompts,
             audios,
             device,
             training_args.per_device_eval_batch_size,
             sampling_rate,
+            noise_level_to_compute_clean_wer,
+            si_sdr_measures,
         )
         results["wer"] = word_error
+        if clean_word_error is not None:
+            results["clean_wer"] = clean_word_error
+            results["noisy_word_error"] = noisy_word_error
+            results["percent_clean_samples"] = percent_clean_samples
 
-        return results, texts, prompts, audios, transcriptions
+        return results, texts, prompts, audios, transcriptions, si_sdr_measures
 
     # Define Training Schedule
     # Store some constants
@@ -698,24 +794,24 @@ def main():
 
     # Now save everything to be able to create a single processor later
     # make sure all processes wait until data is saved
-    with accelerator.main_process_first():
-        # only the main process saves them
-        if accelerator.is_main_process:
-            # save feature extractor, tokenizer and config
-            if (
-                model_args.prompt_tokenizer_name is None
-                and model_args.description_tokenizer_name
-                or (model_args.prompt_tokenizer_name == model_args.description_tokenizer_name)
-            ):
-                prompt_tokenizer.save_pretrained(training_args.output_dir)
-            else:
-                logger.warning(
-                    f"Prompt tokenizer ('{model_args.prompt_tokenizer_name}') and description tokenizer ('{model_args.description_tokenizer_name}') are not the same. Saving only the prompt tokenizer."
-                )
-                prompt_tokenizer.save_pretrained(training_args.output_dir)
+    # only the main process saves them
+    if accelerator.is_main_process:
+        # save feature extractor, tokenizer and config
+        if (
+            model_args.prompt_tokenizer_name is None
+            and model_args.description_tokenizer_name
+            or (model_args.prompt_tokenizer_name == model_args.description_tokenizer_name)
+        ):
+            prompt_tokenizer.save_pretrained(training_args.output_dir)
+        else:
+            logger.warning(
+                f"Prompt tokenizer ('{model_args.prompt_tokenizer_name}') and description tokenizer ('{model_args.description_tokenizer_name}') are not the same. Saving only the prompt tokenizer."
+            )
+            prompt_tokenizer.save_pretrained(training_args.output_dir)
 
-            feature_extractor.save_pretrained(training_args.output_dir)
-            config.save_pretrained(training_args.output_dir)
+        feature_extractor.save_pretrained(training_args.output_dir)
+        config.save_pretrained(training_args.output_dir)
+    accelerator.wait_for_everyone()
 
     if checkpoint is not None:
         accelerator.load_state(checkpoint)
@@ -732,7 +828,8 @@ def main():
         steps_trained_progress_bar.update(cur_step)
 
         for epoch in range(0, epochs_trained):
-            vectorized_datasets["train"] = vectorized_datasets["train"].shuffle(training_args.seed)
+            with accelerator.local_main_process_first():
+                vectorized_datasets["train"] = vectorized_datasets["train"].shuffle(training_args.seed)
 
         if training_args.max_steps < 0:
             # we know exactly the number of steps per epoch, so can skip through the required number of batches
@@ -742,7 +839,8 @@ def main():
             # So we just shuffle the dataset one extra time and start from a fresh epoch
             # This is "good enough" for our purposes but not fully correct
             resume_step = None
-            vectorized_datasets["train"] = vectorized_datasets["train"].shuffle(training_args.seed)
+            with accelerator.local_main_process_first():
+                vectorized_datasets["train"] = vectorized_datasets["train"].shuffle(training_args.seed)
     else:
         resume_step = None
 
@@ -762,8 +860,6 @@ def main():
         accelerator,
         autocast_kwargs,
     ):
-        model.train()
-
         if mixed_precision == "fp16":
             # fp16 doesn't work with T5-like models
             with accelerator.autocast(autocast_handler=autocast_kwargs):
@@ -775,6 +871,22 @@ def main():
                     encoder_outputs = model.module.text_encoder(
                         input_ids=batch.get("input_ids"), attention_mask=batch.get("attention_mask", None)
                     )
+                # we optionnally project last_hidden_state to avoid recomputing every time
+                encoder_hidden_states = encoder_outputs.last_hidden_state
+                if (
+                    config.text_encoder.hidden_size != config.decoder.hidden_size
+                    and config.decoder.cross_attention_hidden_size is None
+                ):
+                    encoder_hidden_states = (
+                        model.enc_to_dec_proj(encoder_hidden_states)
+                        if training_args.parallel_mode.value != "distributed"
+                        else model.module.enc_to_dec_proj(encoder_hidden_states)
+                    )
+
+                if batch.get("attention_mask", None) is not None:
+                    encoder_hidden_states = encoder_hidden_states * batch.get("attention_mask", None)[..., None]
+
+                encoder_outputs.last_hidden_state = encoder_hidden_states
                 batch["encoder_outputs"] = encoder_outputs
 
         outputs = model(**batch)
@@ -791,20 +903,34 @@ def main():
         autocast_kwargs,
     ):
         eval_model = model if not training_args.torch_compile else model._orig_mod
-        eval_model.eval()
 
         if mixed_precision == "fp16":
             # fp16 doesn't work with T5-like models
             with accelerator.autocast(autocast_handler=autocast_kwargs):
-                with torch.no_grad():
-                    if training_args.parallel_mode.value != "distributed" or training_args.torch_compile:
-                        encoder_outputs = eval_model.text_encoder(
-                            input_ids=batch.get("input_ids"), attention_mask=batch.get("attention_mask", None)
-                        )
-                    else:
-                        encoder_outputs = eval_model.module.text_encoder(
-                            input_ids=batch.get("input_ids"), attention_mask=batch.get("attention_mask", None)
-                        )
+                if training_args.parallel_mode.value != "distributed":
+                    encoder_outputs = model.text_encoder(
+                        input_ids=batch.get("input_ids"), attention_mask=batch.get("attention_mask", None)
+                    )
+                else:
+                    encoder_outputs = model.module.text_encoder(
+                        input_ids=batch.get("input_ids"), attention_mask=batch.get("attention_mask", None)
+                    )
+                # we optionnally project last_hidden_state to avoid recomputing every time
+                encoder_hidden_states = encoder_outputs.last_hidden_state
+                if (
+                    config.text_encoder.hidden_size != config.decoder.hidden_size
+                    and config.decoder.cross_attention_hidden_size is None
+                ):
+                    encoder_hidden_states = (
+                        model.enc_to_dec_proj(encoder_hidden_states)
+                        if training_args.parallel_mode.value != "distributed"
+                        else model.module.enc_to_dec_proj(encoder_hidden_states)
+                    )
+
+                if batch.get("attention_mask", None) is not None:
+                    encoder_hidden_states = encoder_hidden_states * batch.get("attention_mask", None)[..., None]
+
+                encoder_outputs.last_hidden_state = encoder_hidden_states
                 batch["encoder_outputs"] = encoder_outputs
 
         with torch.no_grad():
@@ -814,18 +940,24 @@ def main():
         metrics = {"loss": ce_loss}
         return metrics
 
-    def generate_step(batch):
+    def generate_step(batch, accelerator):
         batch.pop("decoder_attention_mask", None)
-        eval_model = accelerator.unwrap_model(model, keep_fp32_wrapper=mixed_precision != "fp16").eval()
+        eval_model = accelerator.unwrap_model(model, keep_fp32_wrapper=True)
         if training_args.torch_compile:
+            # if the model is compiled, we use the original model bc compile is not compatible with .generate
             eval_model = model._orig_mod
 
+        # since we've might have loaded the weights in fp32, we have to autocast to ensure FA2 weights are in half-precision.
+        # with accelerator.autocast(autocast_handler=AutocastKwargs(enabled=(attn_implementation=="flash_attention_2"))):
         output_audios = eval_model.generate(**batch, **gen_kwargs)
         output_audios = accelerator.pad_across_processes(output_audios, dim=1, pad_index=0)
         return output_audios
 
+    model.train()
+
     for epoch in range(epochs_trained, num_epochs):
-        vectorized_datasets["train"] = vectorized_datasets["train"].shuffle(training_args.seed)
+        with accelerator.local_main_process_first():
+            vectorized_datasets["train"] = vectorized_datasets["train"].shuffle(training_args.seed)
         sampler = None
         if training_args.group_by_length:
             sampler = LengthGroupedSampler(train_batch_size, lengths=vectorized_datasets["train"]["target_length"])
@@ -843,8 +975,10 @@ def main():
 
         if resume_step is not None:
             # Skip the first N batches in the dataloader when resuming from a checkpoint
+            logger.info(f"  Skip first {resume_step} batches")
             train_dataloader = accelerator.skip_first_batches(train_dataloader, resume_step)
             resume_step = None
+            accelerator.wait_for_everyone()
 
         for batch in train_dataloader:
             with accelerator.accumulate(model):
@@ -901,10 +1035,12 @@ def main():
                                 commit_message=f"Saving train state of step {cur_step}",
                                 run_as_future=True,
                             )
+                    accelerator.wait_for_everyone()
 
                 if training_args.do_eval and (cur_step % eval_steps == 0 or cur_step == total_train_steps):
                     train_time += time.time() - train_start
                     # ======================== Evaluating ==============================
+                    model.eval()
                     eval_metrics = []
                     eval_preds = []
                     eval_descriptions = []
@@ -919,7 +1055,7 @@ def main():
                         collate_fn=data_collator,
                         batch_size=per_device_eval_batch_size,
                         drop_last=False,
-                        num_workers=training_args.dataloader_pin_memory,
+                        num_workers=training_args.eval_dataloader_num_workers,
                         pin_memory=training_args.dataloader_pin_memory,
                     )
                     validation_dataloader = accelerator.prepare(validation_dataloader)
@@ -952,7 +1088,7 @@ def main():
                             position=2,
                             disable=not accelerator.is_local_main_process,
                         ):
-                            generated_audios = generate_step(batch)
+                            generated_audios = generate_step(batch, accelerator)
                             # Gather all predictions and targets
                             generated_audios, input_ids, prompts = accelerator.pad_across_processes(
                                 (generated_audios, batch["input_ids"], batch["prompt_input_ids"]), dim=1, pad_index=0
@@ -967,35 +1103,51 @@ def main():
                     eval_time = time.time() - eval_start
                     # normalize eval metrics
                     eval_metrics = {
-                        key: torch.mean(torch.cat([d[key].unsqueeze(0) for d in eval_metrics]))
-                        for key in eval_metrics[0]
+                        key: torch.mean(torch.cat([d[key] for d in eval_metrics])).to("cpu") for key in eval_metrics[0]
                     }
 
                     # compute metrics
                     metrics_desc = ""
                     if training_args.predict_with_generate:
-                        metric_values, pred_descriptions, pred_prompts, audios, transcriptions = compute_metrics(
-                            eval_preds, eval_descriptions, eval_prompts, accelerator.device
-                        )
-                        eval_metrics.update(metric_values)
-                        metrics_desc = " ".join([f"Eval {key}: {value} |" for key, value in metric_values.items()])
-                        if "wandb" in training_args.report_to:
-                            log_pred(
-                                accelerator,
+                        if accelerator.is_local_main_process:
+                            (
+                                metric_values,
                                 pred_descriptions,
                                 pred_prompts,
-                                transcriptions,
                                 audios,
-                                sampling_rate=sampling_rate,
-                                step=cur_step,
-                                prefix="eval",
+                                transcriptions,
+                                si_sdr_measures,
+                            ) = compute_metrics(
+                                eval_preds,
+                                eval_descriptions,
+                                eval_prompts,
+                                accelerator.device,
+                                training_args.compute_clap_similarity_metric,
+                                training_args.compute_noise_level_metric,
+                                training_args.noise_level_to_compute_clean_wer,
                             )
+                            eval_metrics.update(metric_values)
+                            metrics_desc = " ".join([f"Eval {key}: {value} |" for key, value in metric_values.items()])
+                            if "wandb" in training_args.report_to:
+                                log_pred(
+                                    accelerator,
+                                    pred_descriptions,
+                                    pred_prompts,
+                                    transcriptions,
+                                    audios,
+                                    si_sdr_measures,
+                                    sampling_rate=sampling_rate,
+                                    step=cur_step,
+                                    prefix="eval",
+                                )
+                        accelerator.wait_for_everyone()
 
                     # Print metrics and update progress bar
-                    steps_trained_progress_bar.write(
-                        f"Eval results for step ({cur_step} / {total_train_steps} | Eval Loss: {eval_metrics['loss']} |"
-                        f" {metrics_desc})"
-                    )
+                    if accelerator.is_local_main_process:
+                        steps_trained_progress_bar.write(
+                            f"Eval results for step ({cur_step} / {total_train_steps} | Eval Loss: {eval_metrics['loss']} |"
+                            f" {metrics_desc})"
+                        )
 
                     log_metric(
                         accelerator,
@@ -1007,11 +1159,14 @@ def main():
                     )
 
                     # release eval batch and relax metrics
-                    eval_metrics = []
-                    eval_preds = []
-                    eval_descriptions = []
-                    eval_prompts = []
-                    batch = release_memory(batch)
+                    eval_metrics, eval_preds, eval_descriptions, eval_prompts, batch, eval_metric = release_memory(
+                        eval_metrics, eval_preds, eval_descriptions, eval_prompts, batch, eval_metric
+                    )
+                    if training_args.predict_with_generate:
+                        generated_audios, input_ids, prompts = release_memory(generated_audios, input_ids, prompts)
+
+                    # train mode
+                    model.train()
 
                     # flush the train metrics
                     train_start = time.time()
@@ -1028,5 +1183,4 @@ def main():
 
 
 if __name__ == "__main__":
-    set_start_method("spawn")
     main()

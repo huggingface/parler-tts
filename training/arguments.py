@@ -78,6 +78,22 @@ class ModelArguments:
             "help": "Used to compute audio similarity during evaluation. Path to pretrained model or model identifier from huggingface.co/models"
         },
     )
+    attn_implementation: str = field(
+        default="eager",
+        metadata={"help": "Attention implementation used. One of `eager`, `sdpa`, `flash_attention_2`"},
+    )
+    cross_attention_implementation_strategy: str = field(
+        default=None,
+        metadata={
+            "help": "If not specified, the cross-attention implementation will be the same as `_attn_implementation`. If `always_eager`, it will always be the eager implementation. If `always_sdpa`, it will always be the sdpa implementation."
+        },
+    )
+    prompt_padding_side: Optional[str] = field(
+        default="left",
+        metadata={
+            "help": "Prompt tokenizer padding side. Defaults to `left`. If the prompt is pre-pended to the codebooks hidden states, it should be padded on the left."
+        },
+    )
 
 
 @dataclass
@@ -290,6 +306,10 @@ class DataTrainingArguments:
         },
     )
     temporary_save_to_disk: str = field(default=None, metadata={"help": "Temporarily save audio labels here."})
+    save_codec_steps: Optional[int] = field(
+        default=500,
+        metadata={"help": "Temporarily save the audio labels every `save_steps`."},
+    )
     pad_to_multiple_of: Optional[int] = field(
         default=2,
         metadata={"help": ("Pad to multiple of for tokenizers.")},
@@ -310,4 +330,33 @@ class ParlerTTSTrainingArguments(Seq2SeqTrainingArguments):
     audio_encoder_per_device_batch_size: int = field(
         default=8,
         metadata={"help": ("Specify the batch size of the audio encoding pre-processing steps.")},
+    )
+    eval_dataloader_num_workers: Optional[int] = field(
+        default=0,
+        metadata={
+            "help": (
+                "Number of subprocesses to use for evaluation data loading (PyTorch only). 0 means that the data will be loaded in the main process."
+            )
+        },
+    )
+    compute_clap_similarity_metric: bool = field(
+        default=True,
+        metadata={
+            "help": (
+                "Whether or not to compute the clap similarity metric between the description and the generation during evalution."
+            )
+        },
+    )
+    compute_noise_level_metric: bool = field(
+        default=True,
+        metadata={"help": ("Whether or not to compute the squim si-sdr measure of the generations.")},
+    )
+    noise_level_to_compute_clean_wer: float = field(
+        default=25,
+        metadata={
+            "help": (
+                "if `compute_noise_level_metric=True`, will compute a 'clean' WER on samples with generated noise higher than `noise_level_to_compute_clean_wer`."
+                "This is a proxy measure to compute WER on clean audios, provided that the model learn to generate clean audios."
+            )
+        },
     )

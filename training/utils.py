@@ -7,6 +7,7 @@ from typing import Dict, List
 
 import torch
 from wandb import Audio
+from datasets import load_from_disk, concatenate_datasets
 
 
 def list_field(default=None, metadata=None):
@@ -14,6 +15,8 @@ def list_field(default=None, metadata=None):
 
 
 _RE_CHECKPOINT = re.compile(r"^checkpoint-(\d+)-epoch-(\d+)$")
+CHECKPOINT_CODEC_PREFIX = "checkpoint"
+_RE_CODEC_CHECKPOINT = re.compile(r"^checkpoint-(\d+)$")
 
 
 def get_last_checkpoint(folder):
@@ -60,6 +63,59 @@ def rotate_checkpoints(save_total_limit=None, output_dir=None, checkpoint_prefix
         shutil.rmtree(checkpoint, ignore_errors=True)
 
 
+def save_codec_checkpoint(output_dir, dataset, step):
+    checkpoint_path = f"{CHECKPOINT_CODEC_PREFIX}-{step}"
+    output_path = os.path.join(output_dir, checkpoint_path)
+    dataset.save_to_disk(output_path)
+
+
+def load_codec_checkpoint(checkpoint_path):
+    dataset = load_from_disk(checkpoint_path)
+    return dataset
+
+
+def sorted_codec_checkpoints(output_dir=None) -> List[str]:
+    """Helper function to sort saved checkpoints from oldest to newest."""
+    ordering_and_checkpoint_path = []
+
+    glob_checkpoints = [str(x) for x in Path(output_dir).glob(f"{CHECKPOINT_CODEC_PREFIX}-*")]
+
+    for path in glob_checkpoints:
+        regex_match = re.match(f".*{CHECKPOINT_CODEC_PREFIX}-([0-9]+)", path)
+        if regex_match is not None and regex_match.groups() is not None:
+            ordering_and_checkpoint_path.append((int(regex_match.groups()[0]), path))
+
+    checkpoints_sorted = sorted(ordering_and_checkpoint_path)
+    checkpoints_sorted = [checkpoint[1] for checkpoint in checkpoints_sorted]
+    return checkpoints_sorted
+
+
+def load_all_codec_checkpoints(output_dir=None) -> List[str]:
+    """Helper function to load and concat all checkpoints."""
+    checkpoints_sorted = sorted_codec_checkpoints(output_dir=output_dir)
+    datasets = [load_from_disk(checkpoint) for checkpoint in checkpoints_sorted]
+    datasets = concatenate_datasets(datasets, axis=0)
+    return datasets
+
+
+def get_last_codec_checkpoint_step(folder) -> int:
+    if not os.path.exists(folder) or not os.path.isdir(folder):
+        os.makedirs(folder, exist_ok=True)
+        return 0
+    content = os.listdir(folder)
+    checkpoints = [path for path in content if _RE_CODEC_CHECKPOINT.search(path) is not None]
+    if len(checkpoints) == 0:
+        return 0
+    last_checkpoint = os.path.join(
+        folder, max(checkpoints, key=lambda x: int(_RE_CODEC_CHECKPOINT.search(x).groups()[0]))
+    )
+    # Find num steps saved state string pattern
+    pattern = r"checkpoint-(\d+)"
+    match = re.search(pattern, last_checkpoint)
+    cur_step = int(match.group(1))
+    return cur_step
+
+
 def log_metric(
     accelerator,
     metrics: Dict,
@@ -86,6 +142,7 @@ def log_pred(
     pred_prompts: List[str],
     transcriptions: List[str],
     audios: List[torch.Tensor],
+    si_sdr_measures: List[float],
     sampling_rate: int,
     step: int,
     prefix: str = "eval",
@@ -98,16 +155,33 @@ def log_pred(
         cur_step_pretty = f"{int(step // 1000)}k" if step > 1000 else step
         prefix_pretty = prefix.replace("/", "-")
 
-        # convert str data to a wandb compatible format
-        str_data = [[pred_descriptions[i], pred_prompts[i], transcriptions[i]] for i in range(len(pred_descriptions))]
-        # log as a table with the appropriate headers
-        wandb_tracker.log_table(
-            table_name=f"predictions/{prefix_pretty}-step-{cur_step_pretty}",
-            columns=["Target descriptions", "Target prompts", "Predicted transcriptions"],
-            data=str_data[:num_lines],
-            step=step,
-            commit=False,
-        )
+        if si_sdr_measures is None:
+            # convert str data to a wandb compatible format
+            str_data = [
+                [pred_descriptions[i], pred_prompts[i], transcriptions[i]] for i in range(len(pred_descriptions))
+            ]
+            # log as a table with the appropriate headers
+            wandb_tracker.log_table(
+                table_name=f"predictions/{prefix_pretty}-step-{cur_step_pretty}",
+                columns=["Target descriptions", "Target prompts", "Predicted transcriptions"],
+                data=str_data[:num_lines],
+                step=step,
+                commit=False,
+            )
+        else:
+            # convert str data to a wandb compatible format
+            str_data = [
+                [pred_descriptions[i], pred_prompts[i], transcriptions[i], si_sdr_measures[i]]
+                for i in range(len(pred_descriptions))
+            ]
+            # log as a table with the appropriate headers
+            wandb_tracker.log_table(
+                table_name=f"predictions/{prefix_pretty}-step-{cur_step_pretty}",
+                columns=["Target descriptions", "Target prompts", "Predicted transcriptions", "Noise estimation"],
+                data=str_data[:num_lines],
+                step=step,
+                commit=False,
+            )
 
         # wandb can only loads 100 audios per step
         wandb_tracker.log(

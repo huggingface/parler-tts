@@ -58,4 +58,7 @@ if __name__ == "__main__":
     model.generation_config.do_sample = True  # True
     model.generation_config.guidance_scale = 1  # 3.0
 
+    model.config.pad_token_id = encodec_vocab_size
+    model.config.decoder_start_token_id = encodec_vocab_size + 1
+
     model.save_pretrained(os.path.join(args.save_directory, "tiny-model"))

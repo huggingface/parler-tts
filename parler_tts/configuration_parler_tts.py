@@ -47,6 +47,17 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
             Number of decoder layers.
         num_attention_heads (`int`, *optional*, defaults to 16):
             Number of attention heads for each attention layer in the Transformer block.
+        num_key_value_heads (`int`, *optional*):
+            This is the number of key_value heads that should be used to implement Grouped Query Attention. If
+            `num_key_value_heads=num_attention_heads`, the model will use Multi Head Attention (MHA), if
+            `num_key_value_heads=1 the model will use Multi Query Attention (MQA) otherwise GQA is used. When
+            converting a multi-head checkpoint to a GQA checkpoint, each group key and value head should be constructed
+            by meanpooling all the original heads within that group. For more details checkout [this
+            paper](https://arxiv.org/pdf/2305.13245.pdf). If it is not specified, will default to
+            `num_attention_heads`.
+        num_cross_attention_key_value_heads (`int`, *optional*):
+            This is the number of key_value heads that should be used to implement Grouped Query Attention in the cross-attention layers.
+            If it is not specified, will default to `num_key_value_heads`.
         ffn_dim (`int`, *optional*, defaults to 4096):
             Dimensionality of the "intermediate" (often named feed-forward) layer in the Transformer block.
         activation_function (`str` or `function`, *optional*, defaults to `"gelu"`):
@@ -74,6 +85,12 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
             The number of parallel codebooks forwarded to the model.
         tie_word_embeddings(`bool`, *optional*, defaults to `False`):
             Whether input and output word embeddings should be tied.
+        rope_embeddings (`bool`, *optional*, defaults to `False`):
+            Whether to use ROPE or absolute positional embeddings.
+        rope_theta (`float`, *optional*, defaults to 100000.0):
+            The base period of the RoPE embeddings.
+        cross_attention_implementation_strategy (`str`, *optional*):
+            If not specified, the cross-attention implementation will be the same as `_attn_implementation`. If `always_eager`, it will always be the eager implementation. If `always_sdpa`, it will always be the sdpa implementation.
     """
 
     model_type = "parler_tts_decoder"
@@ -86,6 +103,8 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
         num_hidden_layers=24,
         ffn_dim=4096,
         num_attention_heads=16,
+        num_key_value_heads=None,
+        num_cross_attention_key_value_heads=None,
         layerdrop=0.0,
         use_cache=True,
         activation_function="gelu",
@@ -100,6 +119,9 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
         bos_token_id=2049,
         eos_token_id=2048,
         tie_word_embeddings=False,
+        rope_embeddings=False,
+        rope_theta=10_000.0,
+        cross_attention_implementation_strategy=None,
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -108,6 +130,12 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
         self.ffn_dim = ffn_dim
         self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
+        if num_key_value_heads is None:
+            num_key_value_heads = num_attention_heads
+        self.num_key_value_heads = num_key_value_heads
+        if num_cross_attention_key_value_heads is None:
+            num_cross_attention_key_value_heads = num_key_value_heads
+        self.num_cross_attention_key_value_heads = num_cross_attention_key_value_heads
         self.dropout = dropout
         self.attention_dropout = attention_dropout
         self.activation_dropout = activation_dropout
@@ -117,6 +145,9 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
         self.use_cache = use_cache
         self.scale_embedding = scale_embedding  # scale factor will be sqrt(d_model) if True
         self.num_codebooks = num_codebooks
+        self.rope_embeddings = rope_embeddings
+        self.rope_theta = rope_theta
+        self.cross_attention_implementation_strategy = cross_attention_implementation_strategy
 
         super().__init__(
             pad_token_id=pad_token_id,
@@ -140,6 +171,8 @@ class ParlerTTSConfig(PretrainedConfig):
         vocab_size (`int`, *optional*, defaults to 1024):
             Vocabulary size of the prompt token ids. Defines the number of different tokens that can be
             represented by the `prompt_inputs_ids`.
+        prompt_cross_attention (`bool`, *optional*, defaults to `False`):
+            Whether to use cross-attention conditioning for the prompt (as well as the description).
         kwargs (*optional*):
             Dictionary of keyword arguments. Notably:
 
@@ -190,7 +223,7 @@ class ParlerTTSConfig(PretrainedConfig):
     model_type = "parler_tts"
     is_composition = True
 
-    def __init__(self, vocab_size=1024, **kwargs):
+    def __init__(self, vocab_size=1024, prompt_cross_attention=False, **kwargs):
         super().__init__(**kwargs)
         if "text_encoder" not in kwargs or "audio_encoder" not in kwargs or "decoder" not in kwargs:
             raise ValueError("Config has to be initialized with text_encoder, audio_encoder and decoder config")
@@ -204,6 +237,7 @@ class ParlerTTSConfig(PretrainedConfig):
         decoder_config = kwargs.pop("decoder")
 
         self.vocab_size = vocab_size
+        self.prompt_cross_attention = prompt_cross_attention
         self.text_encoder = AutoConfig.for_model(text_encoder_model_type, **text_encoder_config)
         self.audio_encoder = AutoConfig.for_model(audio_encoder_model_type, **audio_encoder_config)
         self.decoder = ParlerTTSDecoderConfig(**decoder_config)
@@ -236,3 +270,21 @@ class ParlerTTSConfig(PretrainedConfig):
     # This is a property because you might want to change the codec model on the fly
     def sampling_rate(self):
         return self.audio_encoder.sampling_rate
+
+    # Copy from musicgen
+    @property
+    def _attn_implementation(self):
+        # This property is made private for now (as it cannot be changed and a PreTrainedModel.use_attn_implementation method needs to be implemented.)
+        if hasattr(self, "_attn_implementation_internal"):
+            if self._attn_implementation_internal is None:
+                # `config.attn_implementation` should never be None, for backward compatibility.
+                return "eager"
+            else:
+                return self._attn_implementation_internal
+        else:
+            return "eager"
+
+    @_attn_implementation.setter
+    def _attn_implementation(self, value):
+        self._attn_implementation_internal = value
+        self.decoder._attn_implementation = value
