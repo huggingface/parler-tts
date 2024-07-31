@@ -1,5 +1,7 @@
+from transformers import AutoFeatureExtractor, AutoTokenizer
+
 from parler_tts import ParlerTTSForConditionalGeneration
-from transformers import AutoTokenizer, AutoFeatureExtractor
+
 
 path = "TODO"
 repo_id = "parler_tts_600M"

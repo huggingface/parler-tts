@@ -1,7 +1,10 @@
-from parler_tts import ParlerTTSForCausalLM, ParlerTTSForConditionalGeneration, ParlerTTSDecoderConfig
-from transformers import AutoConfig
-import os
 import argparse
+import os
+
+from transformers import AutoConfig
+
+from parler_tts import ParlerTTSDecoderConfig, ParlerTTSForCausalLM, ParlerTTSForConditionalGeneration
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

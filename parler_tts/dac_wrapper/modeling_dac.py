@@ -1,10 +1,9 @@
 import torch
-
-from transformers import PreTrainedModel
-from transformers.models.encodec.modeling_encodec import EncodecEncoderOutput, EncodecDecoderOutput
-from .configuration_dac import DACConfig
-
 from dac.model import DAC
+from transformers import PreTrainedModel
+from transformers.models.encodec.modeling_encodec import EncodecDecoderOutput, EncodecEncoderOutput
+
+from .configuration_dac import DACConfig
 
 
 # model doesn't support batching yet
@@ -79,7 +78,7 @@ class DACModel(PreTrainedModel):
             )
 
         for offset in range(0, input_length - step, stride):
-            mask = padding_mask[..., offset : offset + chunk_length].bool()
+            padding_mask[..., offset : offset + chunk_length].bool()
             frame = audio_data[:, :, offset : offset + chunk_length]
 
             scale = None
@@ -134,4 +133,4 @@ class DACModel(PreTrainedModel):
         return EncodecDecoderOutput(audio_values)
 
     def forward(self, tensor):
-        raise ValueError(f"`DACModel.forward` not implemented yet")
+        raise ValueError("`DACModel.forward` not implemented yet")

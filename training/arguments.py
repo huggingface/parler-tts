@@ -80,9 +80,7 @@ class ModelArguments:
     )
     attn_implementation: str = field(
         default="eager",
-        metadata={
-            "help": "Attention implementation used. One of `eager`, `sdpa`, `flash_attention_2`"
-        },
+        metadata={"help": "Attention implementation used. One of `eager`, `sdpa`, `flash_attention_2`"},
     )
     cross_attention_implementation_strategy: str = field(
         default=None,
@@ -329,5 +327,9 @@ class ParlerTTSTrainingArguments(Seq2SeqTrainingArguments):
     )
     eval_dataloader_num_workers: Optional[int] = field(
         default=0,
-        metadata={"help": ("Number of subprocesses to use for evaluation data loading (PyTorch only). 0 means that the data will be loaded in the main process.")},
-    )            
+        metadata={
+            "help": (
+                "Number of subprocesses to use for evaluation data loading (PyTorch only). 0 means that the data will be loaded in the main process."
+            )
+        },
+    )

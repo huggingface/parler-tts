@@ -21,41 +21,42 @@ import os
 import re
 import sys
 import time
-from multiprocess import set_start_method
 from datetime import timedelta
-
-from tqdm import tqdm
 from pathlib import Path
 
-import torch
-from torch.utils.data import DataLoader
-
 import datasets
-from datasets import DatasetDict, Dataset, IterableDataset, concatenate_datasets
-
-from huggingface_hub import HfApi
-
+import torch
 import transformers
-from transformers import AutoFeatureExtractor, AutoTokenizer, HfArgumentParser
-from transformers.trainer_pt_utils import LengthGroupedSampler
-from transformers.optimization import get_scheduler
-from transformers.utils import send_example_telemetry
-
-
 from accelerate import Accelerator, skip_first_batches
-from accelerate.utils import set_seed, AutocastKwargs, InitProcessGroupKwargs, TorchDynamoPlugin
+from accelerate.utils import AutocastKwargs, InitProcessGroupKwargs, set_seed
 from accelerate.utils.memory import release_memory
+from datasets import Dataset, DatasetDict, IterableDataset, concatenate_datasets
+from huggingface_hub import HfApi
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+from transformers import AutoFeatureExtractor, AutoTokenizer, HfArgumentParser
+from transformers.optimization import get_scheduler
+from transformers.trainer_pt_utils import LengthGroupedSampler
+from transformers.utils import send_example_telemetry
 
 from parler_tts import (
     ParlerTTSConfig,
     ParlerTTSForConditionalGeneration,
     build_delay_pattern_mask,
 )
-
-from training.utils import get_last_checkpoint, rotate_checkpoints, log_pred, log_metric, load_all_codec_checkpoints, save_codec_checkpoint, get_last_codec_checkpoint_step
-from training.arguments import ModelArguments, DataTrainingArguments, ParlerTTSTrainingArguments
-from training.data import load_multiple_datasets, DataCollatorParlerTTSWithPadding, DataCollatorEncodecWithPadding
+from training.arguments import DataTrainingArguments, ModelArguments, ParlerTTSTrainingArguments
+from training.data import DataCollatorEncodecWithPadding, DataCollatorParlerTTSWithPadding, load_multiple_datasets
 from training.eval import clap_similarity, wer
+from training.utils import (
+    get_last_checkpoint,
+    get_last_codec_checkpoint_step,
+    load_all_codec_checkpoints,
+    log_metric,
+    log_pred,
+    rotate_checkpoints,
+    save_codec_checkpoint,
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -79,13 +80,10 @@ def main():
 
     if training_args.dtype == "float16":
         mixed_precision = "fp16"
-        torch_dtype = torch.float16
     elif training_args.dtype == "bfloat16":
         mixed_precision = "bf16"
-        torch_dtype = torch.bfloat16
     else:
         mixed_precision = "no"
-        torch_dtype = torch.float32
 
     if data_args.pad_to_max_length and (
         data_args.max_duration_in_seconds is None
@@ -299,7 +297,13 @@ def main():
     )
 
     # update pad token id and decoder_start_token_id
-    config.decoder.update({"cross_attention_implementation_strategy": model_args.cross_attention_implementation_strategy if model_args.cross_attention_implementation_strategy is not None else None})
+    config.decoder.update(
+        {
+            "cross_attention_implementation_strategy": model_args.cross_attention_implementation_strategy
+            if model_args.cross_attention_implementation_strategy is not None
+            else None
+        }
+    )
     config.update(
         {
             "pad_token_id": model_args.pad_token_id if model_args.pad_token_id is not None else config.pad_token_id,
@@ -336,13 +340,10 @@ def main():
     description_column_name = data_args.description_column_name
     prompt_column_name = data_args.prompt_column_name
     feature_extractor_input_name = feature_extractor.model_input_names[0]
-    audio_encoder_pad_token_id = config.decoder.pad_token_id
     audio_encoder_eos_token_id = config.decoder.eos_token_id
     audio_encoder_bos_token_id = model.generation_config.decoder_start_token_id
-    max_length = model.generation_config.max_length
     num_codebooks = model.decoder.config.num_codebooks
     bandwidth = model_args.bandwidth
-    attn_implementation = model_args.attn_implementation
 
     # Freeze Encoders
     model.freeze_encoders(model_args.freeze_text_encoder)
@@ -418,7 +419,7 @@ def main():
             output["len_audio"] = len_audio
             # (1, bsz, codebooks, seq_len) -> (bsz, seq_len, codebooks)
             output["labels"] = labels.squeeze(0).transpose(1, 2)
-            
+
             # if `pad_to_max_length`, the maximum corresponding audio length of the current batch is max_duration*sampling_rate
             max_length = len_audio.max() if padding != "max_length" else max_target_length
             output["ratio"] = torch.ones_like(len_audio) * labels.shape[-1] / max_length
@@ -426,7 +427,7 @@ def main():
 
         # (1, codebooks, seq_len) where seq_len=1
         bos_labels = torch.ones((1, num_codebooks, 1)) * audio_encoder_bos_token_id
-        
+
         def postprocess_dataset(labels):
             # (1, codebooks, seq_len)
             labels = torch.tensor(labels).unsqueeze(0)
@@ -454,7 +455,7 @@ def main():
             # we also remove the last timestampts (full of PAD)
             output = {"labels": labels[:, 1:]}
             return output
-   
+
         for split in vectorized_datasets:
             data_loader = DataLoader(
                 raw_datasets[split],
@@ -465,7 +466,7 @@ def main():
             )
             data_loader = accelerator.prepare(data_loader)
             total_inference_steps = len(data_loader)
-            
+
             start_step = get_last_codec_checkpoint_step(os.path.join(data_args.temporary_save_to_disk, split))
             accelerator.wait_for_everyone()
             if start_step > 0:
@@ -477,7 +478,7 @@ def main():
             all_generated_labels = []
             all_lens = []
             if start_step < total_inference_steps:
-                for (i, batch) in enumerate(tqdm(data_loader, disable=not accelerator.is_local_main_process)):
+                for i, batch in enumerate(tqdm(data_loader, disable=not accelerator.is_local_main_process)):
                     cur_step = start_step + i
                     generate_labels = apply_audio_decoder(batch)
                     generate_labels = accelerator.pad_across_processes(generate_labels, dim=1, pad_index=0)
@@ -491,8 +492,10 @@ def main():
 
                         all_generated_labels.extend(lab)
                         all_lens.extend(lens)
-                        
-                        if ((cur_step+1) % data_args.save_codec_steps == 0) or (cur_step == total_inference_steps - 1):
+
+                        if ((cur_step + 1) % data_args.save_codec_steps == 0) or (
+                            cur_step == total_inference_steps - 1
+                        ):
                             tmp_labels = Dataset.from_dict({"labels": all_generated_labels, "target_length": all_lens})
                             tmp_labels = tmp_labels.map(
                                 postprocess_dataset,
@@ -500,13 +503,15 @@ def main():
                                 input_columns=["labels"],
                                 desc="Postprocessing labeling",
                             )
-                            save_codec_checkpoint(os.path.join(data_args.temporary_save_to_disk, split), tmp_labels, cur_step)
+                            save_codec_checkpoint(
+                                os.path.join(data_args.temporary_save_to_disk, split), tmp_labels, cur_step
+                            )
                             all_generated_labels = []
                             all_lens = []
-                        
+
                 accelerator.wait_for_everyone()
-                
-            if accelerator.is_main_process and len(all_generated_labels) > 0:                
+
+            if accelerator.is_main_process and len(all_generated_labels) > 0:
                 tmp_labels = Dataset.from_dict({"labels": all_generated_labels, "target_length": all_lens})
                 tmp_labels = tmp_labels.map(
                     postprocess_dataset,
@@ -523,7 +528,9 @@ def main():
             accelerator.wait_for_everyone()
 
             with accelerator.local_main_process_first():
-                tmp_labels = load_all_codec_checkpoints(os.path.join(data_args.temporary_save_to_disk, split)).select(range(len(vectorized_datasets[split])))
+                tmp_labels = load_all_codec_checkpoints(os.path.join(data_args.temporary_save_to_disk, split)).select(
+                    range(len(vectorized_datasets[split]))
+                )
                 logger.info(f"Concatenating {split}: {tmp_labels} with {vectorized_datasets[split]}")
                 vectorized_datasets[split] = concatenate_datasets([vectorized_datasets[split], tmp_labels], axis=1)
 
@@ -651,7 +658,7 @@ def main():
         steps_per_epoch = total_train_steps
 
     if training_args.eval_steps is None:
-        logger.info(f"eval_steps is not set, evaluating at the end of each epoch")
+        logger.info("eval_steps is not set, evaluating at the end of each epoch")
         eval_steps = steps_per_epoch
     else:
         eval_steps = training_args.eval_steps
@@ -817,7 +824,11 @@ def main():
                     config.text_encoder.hidden_size != config.decoder.hidden_size
                     and config.decoder.cross_attention_hidden_size is None
                 ):
-                    encoder_hidden_states = model.enc_to_dec_proj(encoder_hidden_states) if training_args.parallel_mode.value != "distributed" else model.module.enc_to_dec_proj(encoder_hidden_states)
+                    encoder_hidden_states = (
+                        model.enc_to_dec_proj(encoder_hidden_states)
+                        if training_args.parallel_mode.value != "distributed"
+                        else model.module.enc_to_dec_proj(encoder_hidden_states)
+                    )
 
                 if batch.get("attention_mask", None) is not None:
                     encoder_hidden_states = encoder_hidden_states * batch.get("attention_mask", None)[..., None]
@@ -857,14 +868,17 @@ def main():
                     config.text_encoder.hidden_size != config.decoder.hidden_size
                     and config.decoder.cross_attention_hidden_size is None
                 ):
-                    encoder_hidden_states = model.enc_to_dec_proj(encoder_hidden_states) if training_args.parallel_mode.value != "distributed" else model.module.enc_to_dec_proj(encoder_hidden_states)
+                    encoder_hidden_states = (
+                        model.enc_to_dec_proj(encoder_hidden_states)
+                        if training_args.parallel_mode.value != "distributed"
+                        else model.module.enc_to_dec_proj(encoder_hidden_states)
+                    )
 
                 if batch.get("attention_mask", None) is not None:
                     encoder_hidden_states = encoder_hidden_states * batch.get("attention_mask", None)[..., None]
 
                 encoder_outputs.last_hidden_state = encoder_hidden_states
                 batch["encoder_outputs"] = encoder_outputs
-
 
         with torch.no_grad():
             outputs = eval_model(**batch)
@@ -875,12 +889,14 @@ def main():
 
     def generate_step(batch, accelerator):
         batch.pop("decoder_attention_mask", None)
-        eval_model = accelerator.unwrap_model(model, keep_fp32_wrapper=True) # (attn_implementation!="flash_attention_2"))
+        eval_model = accelerator.unwrap_model(
+            model, keep_fp32_wrapper=True
+        )  # (attn_implementation!="flash_attention_2"))
         if training_args.torch_compile:
             # if the model is compiled, we use the original model bc compile is not compatible with .generate
             eval_model = model._orig_mod
 
-        # since we've might have loaded the weights in fp32, we have to autocast to ensure FA2 weights are in half-precision.  
+        # since we've might have loaded the weights in fp32, we have to autocast to ensure FA2 weights are in half-precision.
         # with accelerator.autocast(autocast_handler=AutocastKwargs(enabled=(attn_implementation=="flash_attention_2"))):
         output_audios = eval_model.generate(**batch, **gen_kwargs)
         output_audios = accelerator.pad_across_processes(output_audios, dim=1, pad_index=0)
@@ -995,7 +1011,7 @@ def main():
 
                     for batch in tqdm(
                         validation_dataloader,
-                        desc=f"Evaluating - Inference ...",
+                        desc="Evaluating - Inference ...",
                         position=2,
                         disable=not accelerator.is_local_main_process,
                     ):
@@ -1017,7 +1033,7 @@ def main():
                         # generation
                         for batch in tqdm(
                             validation_dataloader,
-                            desc=f"Evaluating - Generation ...",
+                            desc="Evaluating - Generation ...",
                             position=2,
                             disable=not accelerator.is_local_main_process,
                         ):
@@ -1079,7 +1095,9 @@ def main():
                     )
 
                     # release eval batch and relax metrics
-                    eval_metrics, eval_preds, eval_descriptions, eval_prompts, batch, eval_metric = release_memory(eval_metrics, eval_preds, eval_descriptions, eval_prompts, batch, eval_metric)
+                    eval_metrics, eval_preds, eval_descriptions, eval_prompts, batch, eval_metric = release_memory(
+                        eval_metrics, eval_preds, eval_descriptions, eval_prompts, batch, eval_metric
+                    )
                     if training_args.predict_with_generate:
                         generated_audios, input_ids, prompts = release_memory(generated_audios, input_ids, prompts)
 

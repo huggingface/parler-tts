@@ -18,23 +18,28 @@ import inspect
 import math
 import random
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Union, List
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.nn import CrossEntropyLoss
 from transformers import AutoConfig, AutoModel, AutoModelForTextEncoding
 from transformers.activations import ACT2FN
-from transformers.generation.configuration_utils import GenerationConfig
-from transformers.generation.stopping_criteria import StoppingCriteriaList
-from transformers.modeling_attn_mask_utils import _prepare_4d_attention_mask, _prepare_4d_attention_mask_for_sdpa, AttentionMaskConverter
-from transformers.generation.logits_process import LogitsProcessorList
 from transformers.cache_utils import (
     Cache,
     DynamicCache,
     EncoderDecoderCache,
     SlidingWindowCache,
     StaticCache,
+)
+from transformers.generation.configuration_utils import GenerationConfig
+from transformers.generation.logits_process import LogitsProcessorList
+from transformers.generation.stopping_criteria import StoppingCriteriaList
+from transformers.modeling_attn_mask_utils import (
+    AttentionMaskConverter,
+    _prepare_4d_attention_mask,
+    _prepare_4d_attention_mask_for_sdpa,
 )
 from transformers.modeling_outputs import (
     BaseModelOutput,
@@ -50,12 +55,11 @@ from transformers.utils import (
     logging,
     replace_return_docstrings,
 )
-import torch.nn.functional as F
-from transformers.utils.import_utils import is_flash_attn_greater_or_equal_2_10, is_flash_attn_2_available
+from transformers.utils.import_utils import is_flash_attn_2_available, is_flash_attn_greater_or_equal_2_10
 
 from .configuration_parler_tts import ParlerTTSConfig, ParlerTTSDecoderConfig
 from .dac_wrapper import DACConfig, DACModel
-from transformers import AutoConfig, AutoModel
+
 
 AutoConfig.register("dac", DACConfig)
 AutoModel.register(DACConfig, DACModel)
@@ -82,6 +86,7 @@ MUSICGEN_PRETRAINED_MODEL_ARCHIVE_LIST = [
 
 
 NEED_SETUP_CACHE_CLASSES_MAPPING = {"static": StaticCache, "sliding_window": SlidingWindowCache}
+
 
 def apply_delay_pattern_mask(input_ids, decoder_pad_token_mask):
     """Apply a delay pattern mask to the decoder input ids, only preserving predictions where
@@ -156,6 +161,7 @@ def build_delay_pattern_mask(
     input_ids = input_ids[..., :first_start_id].reshape(bsz * num_codebooks, -1)
     return input_ids, pattern_mask
 
+
 # Copied from transformers.models.llama.modeling_llama.repeat_kv
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     """
@@ -167,8 +173,6 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
         return hidden_states
     hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_key_value_heads, n_rep, slen, head_dim)
     return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
-
-
 
 
 @dataclass
@@ -250,6 +254,7 @@ class ParlerTTSSinusoidalPositionalEmbedding(nn.Module):
             self.make_weights(seq_len + self.offset, self.embedding_dim)
         return self.weights.index_select(0, position_ids.view(-1)).detach()
 
+
 # Copied from transformers.models.llama.modeling_llama.LlamaRotaryEmbedding with Llama->ParlerTTS
 class ParlerTTSRotaryEmbedding(nn.Module):
     def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None, scaling_factor=1.0):
@@ -286,6 +291,7 @@ class ParlerTTSRotaryEmbedding(nn.Module):
             sin = emb.sin()
         return cos, sin
 
+
 def rotate_half(x):
     """Rotates half the hidden dims of the input."""
     x1 = x[..., : x.shape[-1] // 2]
@@ -315,6 +321,7 @@ def apply_rotary_pos_emb(x, cos, sin, unsqueeze_dim=1):
     x_embed = (x * cos) + (rotate_half(x) * sin)
     return x_embed
 
+
 class ParlerTTSAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper. Modified to use GQA and MQA."""
 
@@ -327,7 +334,7 @@ class ParlerTTSAttention(nn.Module):
         is_decoder: bool = False,
         bias: bool = True,
         is_causal: bool = False,
-        rope_embeddings : bool = False,
+        rope_embeddings: bool = False,
         layer_idx: Optional[int] = None,
         config: Optional[ParlerTTSDecoderConfig] = None,
     ):
@@ -427,7 +434,7 @@ class ParlerTTSAttention(nn.Module):
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
-        
+
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3))
 
         if attention_mask is not None:  # no matter the length, we just slice it
@@ -462,6 +469,7 @@ class ParlerTTSAttention(nn.Module):
 
         return attn_output, attn_weights, past_key_value
 
+
 def _get_unpad_data(attention_mask):
     seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
     indices = torch.nonzero(attention_mask.flatten(), as_tuple=False).flatten()
@@ -472,7 +480,6 @@ def _get_unpad_data(attention_mask):
         cu_seqlens,
         max_seqlen_in_batch,
     )
-
 
 
 # Copied from transformers.models.musicgen.modeling_musicgen.MusicgenFlashAttention2 with Musicgen->ParlerTTS
@@ -518,7 +525,7 @@ class ParlerTTSFlashAttention2(ParlerTTSAttention):
 
         # get query proj
         query_states = self.q_proj(hidden_states).view(bsz, tgt_len, self.num_heads, self.head_dim)
-        
+
         if self.rope_embeddings:
             query_states = apply_rotary_pos_emb(query_states, cos, sin, unsqueeze_dim=2)
 
@@ -562,7 +569,7 @@ class ParlerTTSFlashAttention2(ParlerTTSAttention):
         # cast them back in the correct dtype just to be sure everything works as expected.
         # This might slowdown training & inference so it is recommended to not cast the LayerNorms
         # in fp32. (LlamaRMSNorm handles it correctly)
-            
+
         if query_states.dtype == torch.float32 or value_states.dtype == torch.float32:
             if torch.is_autocast_enabled():
                 target_dtype = torch.get_autocast_gpu_dtype()
@@ -647,7 +654,6 @@ class ParlerTTSFlashAttention2(ParlerTTSAttention):
 
             attn_output = pad_input(attn_output_unpad, indices_q, batch_size, query_length)
         else:
-
             attn_output = flash_attn_func(
                 query_states, key_states, value_states, dropout, softmax_scale=softmax_scale, causal=causal
             )
@@ -693,6 +699,7 @@ class ParlerTTSFlashAttention2(ParlerTTSAttention):
             (max_seqlen_in_batch_q, max_seqlen_in_batch_k),
         )
 
+
 # Copied from transformers.models.bart.modeling_bart.BartSdpaAttention with Bart->Musicgen
 class ParlerTTSSdpaAttention(ParlerTTSAttention):
     def forward(
@@ -721,7 +728,7 @@ class ParlerTTSSdpaAttention(ParlerTTSAttention):
                 attention_mask=attention_mask,
                 layer_head_mask=layer_head_mask,
                 output_attentions=output_attentions,
-                cache_position=cache_position
+                cache_position=cache_position,
             )
 
         # if key_value_states are provided this layer is used as a cross-attention layer
@@ -780,7 +787,6 @@ class ParlerTTSSdpaAttention(ParlerTTSAttention):
         # The tgt_len > 1 is necessary to match with AttentionMaskConverter.to_causal_4d that does not create a causal mask in case tgt_len == 1.
         is_causal = True if self.is_causal and causal_mask is None and tgt_len > 1 else False
 
-
         # NOTE: SDPA with memory-efficient backend is currently (torch==2.1.2) bugged when using non-contiguous inputs and a custom attn_mask,
         # but we are fine here as `_shape` do call `.contiguous()`. Reference: https://github.com/pytorch/pytorch/issues/112577
         attn_output = torch.nn.functional.scaled_dot_product_attention(
@@ -810,12 +816,12 @@ class ParlerTTSSdpaAttention(ParlerTTSAttention):
         return attn_output, None, past_key_value
 
 
-
 PARLERTTS_ATTENTION_CLASSES = {
     "eager": ParlerTTSAttention,
     "sdpa": ParlerTTSSdpaAttention,
     "flash_attention_2": ParlerTTSFlashAttention2,
 }
+
 
 class ParlerTTSDecoderLayer(nn.Module):
     def __init__(self, config: ParlerTTSDecoderConfig, layer_idx: int = None):
@@ -969,7 +975,6 @@ class ParlerTTSPreTrainedModel(PreTrainedModel):
     _no_split_modules = ["ParlerTTSDecoderLayer", "ParlerTTSAttention"]
     _supports_cache_class = True
     _supports_static_cache = True
-
 
     def _init_weights(self, module):
         std = self.config.initializer_factor
@@ -1255,7 +1260,9 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
         self.attn_implementation = config._attn_implementation
         encoder_attn_implementation = config._attn_implementation
         if config.cross_attention_implementation_strategy is not None:
-            encoder_attn_implementation = "sdpa" if config.cross_attention_implementation_strategy == "always_sdpa" else "eager"
+            encoder_attn_implementation = (
+                "sdpa" if config.cross_attention_implementation_strategy == "always_sdpa" else "eager"
+            )
         self.encoder_attn_implementation = encoder_attn_implementation
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
@@ -1393,16 +1400,17 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                     position_ids.masked_fill_(attention_mask == 0, 1)
                 else:
                     position_ids = torch.arange(
-                        past_key_values_length, input_shape[1] + past_key_values_length,
+                        past_key_values_length,
+                        input_shape[1] + past_key_values_length,
                         dtype=torch.long,
-                        device=inputs_embeds.device
+                        device=inputs_embeds.device,
                     )
                     position_ids = position_ids.unsqueeze(0)
 
                 # Some generation methods already pass only the last input ID
                 if position_ids.shape[1] > input_shape[1]:
-                    position_ids = position_ids[:, -input_shape[1]:]
-                    
+                    position_ids = position_ids[:, -input_shape[1] :]
+
             cos, sin = self.rotary_emb(hidden_states.device.type, position_ids)
             cos, sin = cos.to(hidden_states.dtype), sin.to(hidden_states.dtype)
 
@@ -1526,8 +1534,8 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
             attentions=all_self_attns,
             cross_attentions=all_cross_attentions,
         )
-    
-# Copied from transformers.models.llama.modeling_llama.LlamaModel._update_causal_mask
+
+    # Copied from transformers.models.llama.modeling_llama.LlamaModel._update_causal_mask
     def _update_causal_mask(
         self,
         attention_mask: torch.Tensor,
@@ -1858,7 +1866,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
         if past_key_values is not None:
             input_ids = input_ids[:, -1:]
             if position_ids is not None:
-                position_ids = position_ids[:, -input_ids.shape[1]:]
+                position_ids = position_ids[:, -input_ids.shape[1] :]
 
             # we only want to use prompt signal in the 1st generation step but keeping the attention mask
             prompt_hidden_states = None
@@ -1876,7 +1884,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
             "past_key_values": past_key_values,
             "use_cache": use_cache,
             "cache_position": cache_position,
-            "inputs_embeds": inputs_embeds
+            "inputs_embeds": inputs_embeds,
         }
 
     # Ignore copy
@@ -2187,7 +2195,6 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
     _supports_sdpa = True
     _supports_cache_class = True
     _supports_static_cache = True
-    
 
     def __init__(
         self,
@@ -2220,6 +2227,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
 
         if text_encoder is None:
             from transformers.models.auto.modeling_auto import AutoModelForTextEncoding
+
             text_encoder = AutoModelForTextEncoding.from_config(config.text_encoder)
 
         if audio_encoder is None:
@@ -2655,11 +2663,15 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 # add sinusoidal positional embedding
                 positions = self.embed_positions(prompt_hidden_states, 0)
                 prompt_hidden_states = prompt_hidden_states + positions.to(prompt_hidden_states.device)
-                
+
                 if prompt_attention_mask is not None and attention_mask is None:
-                    attention_mask = torch.ones(encoder_hidden_states.shape[:2], device=self.device, dtype=prompt_attention_mask.dtype)
+                    attention_mask = torch.ones(
+                        encoder_hidden_states.shape[:2], device=self.device, dtype=prompt_attention_mask.dtype
+                    )
                 elif attention_mask is not None and prompt_attention_mask is None:
-                    prompt_attention_mask = torch.ones(prompt_hidden_states.shape[:2], device=self.device, dtype=attention_mask.dtype)
+                    prompt_attention_mask = torch.ones(
+                        prompt_hidden_states.shape[:2], device=self.device, dtype=attention_mask.dtype
+                    )
 
                 # concatenate text description states with prompt description states
                 encoder_hidden_states = torch.cat([encoder_hidden_states, prompt_hidden_states], dim=1)
@@ -2668,7 +2680,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
 
                 prompt_hidden_states = None
                 prompt_attention_mask = None
-            
+
             encoder_outputs["last_hidden_state"] = encoder_hidden_states
 
         elif isinstance(encoder_outputs, tuple):
@@ -2678,7 +2690,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
 
         if (labels is not None) and (decoder_input_ids is None and decoder_inputs_embeds is None):
             decoder_input_ids = shift_tokens_right(
-                labels, self.config.decoder.pad_token_id, self.config.decoder.decoder_start_token_id 
+                labels, self.config.decoder.pad_token_id, self.config.decoder.decoder_start_token_id
             ).transpose(1, 2)
 
         elif decoder_input_ids is None and decoder_inputs_embeds is None:
@@ -2771,12 +2783,12 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 past_length = cache_position[0] if cache_position is not None else past_key_values.get_seq_length()
                 if past_key_values.get_seq_length() > 0:
                     # we only want to use prompt signal in the 1st generation step
-                    prompt_hidden_states = None 
+                    prompt_hidden_states = None
             else:
                 past_length = past_key_values[0][0].shape[2]
                 # we only want to use prompt signal in the 1st generation step
                 prompt_hidden_states = None
-        
+
             # Some generation methods already pass only the last input ID
             if decoder_input_ids.shape[1] > past_length:
                 remove_prefix_length = past_length
@@ -2785,7 +2797,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 remove_prefix_length = decoder_input_ids.shape[1] - 1
 
             decoder_input_ids = decoder_input_ids[:, remove_prefix_length:]
-        
+
         if cache_position is None:
             cache_position = torch.arange(
                 past_length, past_length + decoder_input_ids.shape[1], device=decoder_input_ids.device
@@ -2796,8 +2808,8 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 # meaning we are in 1st generation step and prompt_hidden_state will be prepended
                 cur_len += prompt_hidden_states.shape[1]
 
-            cache_position = cache_position[-cur_len :]
-        
+            cache_position = cache_position[-cur_len:]
+
         if decoder_attention_mask is None and prompt_attention_mask is not None:
             input = decoder_input_ids.reshape(-1, self.decoder.num_codebooks, decoder_input_ids.shape[-1])
             bsz, _, seq_len = input.shape
@@ -2812,14 +2824,18 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             logger.warning_once(
                 "`prompt_attention_mask` is specified but `attention_mask` is not. A full `attention_mask` will be created. Make sure this is the intended behaviour."
             )
-            if past_key_values is None or (isinstance(past_key_values, EncoderDecoderCache) and past_key_values.get_seq_length() == 0):
+            if past_key_values is None or (
+                isinstance(past_key_values, EncoderDecoderCache) and past_key_values.get_seq_length() == 0
+            ):
                 decoder_attention_mask = torch.ones(input_shape, device=self.device, dtype=decoder_input_ids.dtype)
             elif prompt_attention_mask is not None:
                 # In the generation case of `prompt_cross_attention=True`, we need to recreate an attention mask from scratch
                 # to be able to prepend the prompt attention mask.
                 # Since we generate token per token, we can recompute the generated length from the information we have.
                 generated_length = past_key_values_length - prompt_attention_mask.shape[1] + 1
-                decoder_attention_mask = torch.ones((input_shape[0], generated_length), device=self.device, dtype=prompt_attention_mask.dtype)
+                decoder_attention_mask = torch.ones(
+                    (input_shape[0], generated_length), device=self.device, dtype=prompt_attention_mask.dtype
+                )
 
         return {
             "input_ids": None,  # encoder_outputs is defined. input_ids not needed
@@ -2835,7 +2851,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             "prompt_attention_mask": prompt_attention_mask,
             "use_cache": use_cache,
             "cache_position": cache_position,
-            "inputs_embeds": inputs_embeds
+            "inputs_embeds": inputs_embeds,
         }
 
     def _prepare_decoder_input_ids_for_generation(
@@ -2888,11 +2904,14 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             num_codebooks = self.decoder.num_codebooks
             input = decoder_input_ids.reshape(-1, num_codebooks, decoder_input_ids.shape[-1])
             inputs_embeds = sum(
-                [self.decoder.model.decoder.embed_tokens[codebook](input[:, codebook]) for codebook in range(num_codebooks)]
+                [
+                    self.decoder.model.decoder.embed_tokens[codebook](input[:, codebook])
+                    for codebook in range(num_codebooks)
+                ]
             )
             inputs_embeds = torch.cat([prompt_hidden_states, inputs_embeds], dim=1)
             model_kwargs["inputs_embeds"] = inputs_embeds
-            
+
         return decoder_input_ids, model_kwargs
 
     def _prepare_text_encoder_kwargs_for_generation(
@@ -2953,30 +2972,34 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             # add sinusoidal positional embedding
             positions = self.embed_positions(prompt_hidden_states, 0)
             prompt_hidden_states = prompt_hidden_states + positions.to(prompt_hidden_states.device)
-            
+
             attention_mask = model_kwargs.get("attention_mask", None)
             prompt_attention_mask = model_kwargs.get("prompt_attention_mask", None)
             encoder_hidden_states = model_kwargs["encoder_outputs"].last_hidden_state
 
             if prompt_attention_mask is not None and attention_mask is None:
-                attention_mask = torch.ones(encoder_hidden_states.shape[:2], device=self.device, dtype=prompt_attention_mask.dtype)
+                attention_mask = torch.ones(
+                    encoder_hidden_states.shape[:2], device=self.device, dtype=prompt_attention_mask.dtype
+                )
             elif attention_mask is not None and prompt_attention_mask is None:
-                prompt_attention_mask = torch.ones(prompt_hidden_states.shape[:2], device=self.device, dtype=attention_mask.dtype)
+                prompt_attention_mask = torch.ones(
+                    prompt_hidden_states.shape[:2], device=self.device, dtype=attention_mask.dtype
+                )
 
             # concatenate text description states with prompt description states
             encoder_hidden_states = torch.cat([encoder_hidden_states, prompt_hidden_states], dim=1)
             if prompt_attention_mask is not None:
                 attention_mask = torch.cat([attention_mask, prompt_attention_mask], dim=1)
-        
+
             model_kwargs["encoder_outputs"].last_hidden_state = encoder_hidden_states
             model_kwargs["attention_mask"] = attention_mask
-            
-            # in this case, since we already concatenated the prompt hidden states and attention mask, we don't need them anymore. 
+
+            # in this case, since we already concatenated the prompt hidden states and attention mask, we don't need them anymore.
             model_kwargs["prompt_hidden_states"] = None
-            model_kwargs["prompt_attention_mask"] = None            
+            model_kwargs["prompt_attention_mask"] = None
         else:
             model_kwargs["prompt_hidden_states"] = prompt_hidden_states
-            # we're keeping the prompt attention mask because it has to be prepended to the decoder attention mask on the fly 
+            # we're keeping the prompt attention mask because it has to be prepended to the decoder attention mask on the fly
         return model_kwargs
 
     def _prepare_audio_encoder_kwargs_for_generation(
@@ -3027,7 +3050,9 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         return model_kwargs
 
     def prepare_decoder_input_ids_from_labels(self, labels: torch.Tensor):
-        return shift_tokens_right(labels, self.config.decoder.pad_token_id, self.config.decoder.bos_token_id).transpose(1, 2) 
+        return shift_tokens_right(
+            labels, self.config.decoder.pad_token_id, self.config.decoder.bos_token_id
+        ).transpose(1, 2)
 
     def resize_token_embeddings(self, *args, **kwargs):
         raise NotImplementedError(
@@ -3081,7 +3106,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         raise ValueError(
             "`decoder_start_token_id` or `bos_token_id` has to be defined for encoder-decoder generation."
         )
-    
+
     def _get_cache(self, cache_implementation: str, max_batch_size: int, max_cache_len: int, model_kwargs) -> Cache:
         """
         Sets a cache for `generate`, that will persist across calls. A new cache will only be initialized a
@@ -3129,7 +3154,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             if requires_cross_attention_cache:
                 encoder_kwargs = cache_kwargs.copy()
                 encoder_kwargs["max_cache_len"] = model_kwargs["encoder_outputs"][0].shape[1]
-                config_cross_attention_cache = copy.deepcopy(self.config.decoder) 
+                config_cross_attention_cache = copy.deepcopy(self.config.decoder)
                 config_cross_attention_cache.update(
                     {"num_key_value_heads": self.config.decoder.num_cross_attention_key_value_heads}
                 )
@@ -3138,7 +3163,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         else:
             self._cache.reset()
         return self._cache
-    
+
     def freeze_encoders(self, freeze_text_encoder=True):
         if freeze_text_encoder:
             for param in self.text_encoder.parameters():
@@ -3331,8 +3356,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 f" {generation_config.max_length}. This can lead to unexpected behavior. You should consider"
                 " increasing `max_new_tokens`."
             )
-        
-        use_dynamic_cache_by_default = False
+
         if generation_config.cache_implementation is not None and model_kwargs.get("past_key_values") is not None:
             raise ValueError(
                 "Passing both `cache_implementation` (used to initialize certain caches) and `past_key_values` (a "
@@ -3361,9 +3385,9 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 )
             elif generation_config.cache_implementation == "quantized":
                 raise ValueError(
-                        "This model does not support the quantized cache. If you want your model to support quantized "
-                        "cache, please open an issue on the Parler-TTS repository https://github.com/huggingface/parler-tts"
-                    )
+                    "This model does not support the quantized cache. If you want your model to support quantized "
+                    "cache, please open an issue on the Parler-TTS repository https://github.com/huggingface/parler-tts"
+                )
         # Use DynamicCache() instance by default. This will avoid back and forth from legacy format that
         # keeps copying the cache thus using much more memory
         elif generation_config.cache_implementation is None and self._supports_default_dynamic_cache():
@@ -3377,14 +3401,12 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                     if not requires_cross_attention_cache
                     else EncoderDecoderCache(DynamicCache(), DynamicCache())
                 )
-                use_dynamic_cache_by_default = True
             elif isinstance(past, tuple):
                 model_kwargs["past_key_values"] = (
                     DynamicCache.from_legacy_cache(past)
                     if not requires_cross_attention_cache
                     else EncoderDecoderCache.from_legacy_cache(past)
                 )
-                use_dynamic_cache_by_default = True
 
         # build the delay pattern mask for offsetting each codebook prediction by 1 (this behaviour is specific to Parler-TTS)
         input_ids, decoder_delay_pattern_mask = self.decoder.build_delay_pattern_mask(

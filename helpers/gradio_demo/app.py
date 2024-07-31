@@ -1,8 +1,9 @@
 import gradio as gr
 import torch
+from transformers import AutoFeatureExtractor, AutoTokenizer, set_seed
 
 from parler_tts import ParlerTTSForConditionalGeneration
-from transformers import AutoTokenizer, AutoFeatureExtractor, set_seed
+
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
@@ -57,7 +58,7 @@ css = """
             background-color: #000000;
             justify-content: center;
             align-items: center;
-            border-radius: 9999px !important; 
+            border-radius: 9999px !important;
             width: 13rem;
             margin-top: 10px;
             margin-left: auto;

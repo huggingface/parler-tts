@@ -1,7 +1,9 @@
-from parler_tts import ParlerTTSForCausalLM, ParlerTTSForConditionalGeneration, ParlerTTSDecoderConfig
-from transformers import AutoConfig
-import os
 import argparse
+import os
+
+from transformers import AutoConfig
+
+from parler_tts import ParlerTTSDecoderConfig, ParlerTTSForCausalLM, ParlerTTSForConditionalGeneration
 
 
 if __name__ == "__main__":
@@ -60,8 +62,8 @@ if __name__ == "__main__":
     model.generation_config.max_length = int(30 * model.audio_encoder.config.frame_rate)
     model.generation_config.do_sample = True  # True
     model.generation_config.guidance_scale = 1  # 3.0
-    
+
     model.config.pad_token_id = encodec_vocab_size
-    model.config.decoder_start_token_id = encodec_vocab_size+1
+    model.config.decoder_start_token_id = encodec_vocab_size + 1
 
     model.save_pretrained(os.path.join(args.save_directory, "tiny-model"))
