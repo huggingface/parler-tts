@@ -39,24 +39,29 @@ from transformers.optimization import get_scheduler
 from transformers.trainer_pt_utils import LengthGroupedSampler
 from transformers.utils import send_example_telemetry
 
+
+from accelerate import Accelerator, skip_first_batches
+from accelerate.utils import set_seed, AutocastKwargs, InitProcessGroupKwargs, TorchDynamoPlugin
+from accelerate.utils.memory import release_memory
+
 from parler_tts import (
     ParlerTTSConfig,
     ParlerTTSForConditionalGeneration,
     build_delay_pattern_mask,
 )
-from training.arguments import DataTrainingArguments, ModelArguments, ParlerTTSTrainingArguments
-from training.data import DataCollatorEncodecWithPadding, DataCollatorParlerTTSWithPadding, load_multiple_datasets
-from training.eval import clap_similarity, wer
+
 from training.utils import (
     get_last_checkpoint,
-    get_last_codec_checkpoint_step,
-    load_all_codec_checkpoints,
-    log_metric,
-    log_pred,
     rotate_checkpoints,
+    log_pred,
+    log_metric,
+    load_all_codec_checkpoints,
     save_codec_checkpoint,
+    get_last_codec_checkpoint_step,
 )
-
+from training.arguments import ModelArguments, DataTrainingArguments, ParlerTTSTrainingArguments
+from training.data import load_multiple_datasets, DataCollatorParlerTTSWithPadding, DataCollatorEncodecWithPadding
+from training.eval import clap_similarity, wer, si_sdr
 
 logger = logging.getLogger(__name__)
 
@@ -80,10 +85,13 @@ def main():
 
     if training_args.dtype == "float16":
         mixed_precision = "fp16"
+        torch_dtype = torch.float16
     elif training_args.dtype == "bfloat16":
         mixed_precision = "bf16"
+        torch_dtype = torch.bfloat16
     else:
         mixed_precision = "no"
+        torch_dtype = torch.float32
 
     if data_args.pad_to_max_length and (
         data_args.max_duration_in_seconds is None
@@ -192,7 +200,7 @@ def main():
         token=data_args.token,
         trust_remote_code=data_args.trust_remote_code,
         use_fast=model_args.use_fast_tokenizer,
-        padding_side="left",  # prompt has to be padded on the left bc it's preprend to codebooks hidden states
+        padding_side=model_args.prompt_padding_side,
     )
 
     # load description tokenizer
@@ -344,6 +352,7 @@ def main():
     audio_encoder_bos_token_id = model.generation_config.decoder_start_token_id
     num_codebooks = model.decoder.config.num_codebooks
     bandwidth = model_args.bandwidth
+    attn_implementation = model_args.attn_implementation
 
     # Freeze Encoders
     model.freeze_encoders(model_args.freeze_text_encoder)
@@ -590,6 +599,24 @@ def main():
             )
         audio_max_length = max([len(l[0]) for l in max_sample["labels"]])
 
+    if description_column_name is not None and data_args.max_description_token_length is not None:
+        with accelerator.local_main_process_first():
+            # filter description that is shorter than max_text_length
+            vectorized_datasets = vectorized_datasets.filter(
+                lambda x: len(x) < data_args.max_description_token_length,
+                num_proc=num_workers,
+                input_columns=["input_ids"],
+            )
+
+    if data_args.max_prompt_token_length is not None:
+        with accelerator.local_main_process_first():
+            # filter description that is shorter than max_text_length
+            vectorized_datasets = vectorized_datasets.filter(
+                lambda x: len(x) < data_args.max_prompt_token_length,
+                num_proc=num_workers,
+                input_columns=["prompt_input_ids"],
+            )
+
     if training_args.group_by_length:
         # apply a simple heuristic to take into account audio and text lengths
         def add_target_lengths(target_length, prompt, description):
@@ -618,26 +645,48 @@ def main():
     # 6. Next, we can prepare the training.
 
     # Let's use word CLAP similary and WER metrics as our evaluation metrics,
-    def compute_metrics(audios, descriptions, prompts, device="cpu"):
+    def compute_metrics(
+        audios,
+        descriptions,
+        prompts,
+        device="cpu",
+        compute_clap_similarity_metric=False,
+        compute_noise_level_metric=False,
+        noise_level_to_compute_clean_wer=None,
+    ):
         results = {}
         input_ids = descriptions
         texts = description_tokenizer.batch_decode(input_ids, skip_special_tokens=True)
         prompts = prompt_tokenizer.batch_decode(prompts, skip_special_tokens=True)
         audios = [a.float().cpu().numpy() for a in audios]
 
-        clap_score = clap_similarity(model_args.clap_model_name_or_path, texts, audios, device)
-        results["clap"] = clap_score
+        if compute_clap_similarity_metric:
+            clap_score = clap_similarity(
+                model_args.clap_model_name_or_path, texts, audios, device, input_sampling_rate=sampling_rate
+            )
+            results["clap"] = clap_score
 
-        word_error, transcriptions = wer(
+        si_sdr_measures = None
+        if compute_noise_level_metric:
+            si_sdr_measures = si_sdr(audios, device, input_sampling_rate=sampling_rate)
+
+        word_error, transcriptions, clean_word_error, noisy_word_error, percent_clean_samples = wer(
             model_args.asr_model_name_or_path,
             prompts,
             audios,
             device,
             training_args.per_device_eval_batch_size,
             sampling_rate,
+            noise_level_to_compute_clean_wer,
+            si_sdr_measures,
         )
         results["wer"] = word_error
-        return results, texts, prompts, audios, transcriptions
+        if clean_word_error is not None:
+            results["clean_wer"] = clean_word_error
+            results["noisy_word_error"] = noisy_word_error
+            results["percent_clean_samples"] = percent_clean_samples
+
+        return results, texts, prompts, audios, transcriptions, si_sdr_measures
 
     # Define Training Schedule
     # Store some constants
@@ -889,9 +938,7 @@ def main():
 
     def generate_step(batch, accelerator):
         batch.pop("decoder_attention_mask", None)
-        eval_model = accelerator.unwrap_model(
-            model, keep_fp32_wrapper=True
-        )  # (attn_implementation!="flash_attention_2"))
+        eval_model = accelerator.unwrap_model(model, keep_fp32_wrapper=True)
         if training_args.torch_compile:
             # if the model is compiled, we use the original model bc compile is not compatible with .generate
             eval_model = model._orig_mod
@@ -1052,16 +1099,28 @@ def main():
                     eval_time = time.time() - eval_start
                     # normalize eval metrics
                     eval_metrics = {
-                        key: torch.mean(torch.cat([d[key].unsqueeze(0) for d in eval_metrics])).to("cpu")
-                        for key in eval_metrics[0]
+                        key: torch.mean(torch.cat([d[key] for d in eval_metrics])).to("cpu") for key in eval_metrics[0]
                     }
 
                     # compute metrics
                     metrics_desc = ""
                     if training_args.predict_with_generate:
                         if accelerator.is_local_main_process:
-                            metric_values, pred_descriptions, pred_prompts, audios, transcriptions = compute_metrics(
-                                eval_preds, eval_descriptions, eval_prompts, accelerator.device
+                            (
+                                metric_values,
+                                pred_descriptions,
+                                pred_prompts,
+                                audios,
+                                transcriptions,
+                                si_sdr_measures,
+                            ) = compute_metrics(
+                                eval_preds,
+                                eval_descriptions,
+                                eval_prompts,
+                                accelerator.device,
+                                training_args.compute_clap_similarity_metric,
+                                training_args.compute_noise_level_metric,
+                                training_args.noise_level_to_compute_clean_wer,
                             )
                             eval_metrics.update(metric_values)
                             metrics_desc = " ".join([f"Eval {key}: {value} |" for key, value in metric_values.items()])
@@ -1072,6 +1131,7 @@ def main():
                                     pred_prompts,
                                     transcriptions,
                                     audios,
+                                    si_sdr_measures,
                                     sampling_rate=sampling_rate,
                                     step=cur_step,
                                     prefix="eval",

@@ -88,6 +88,12 @@ class ModelArguments:
             "help": "If not specified, the cross-attention implementation will be the same as `_attn_implementation`. If `always_eager`, it will always be the eager implementation. If `always_sdpa`, it will always be the sdpa implementation."
         },
     )
+    prompt_padding_side: Optional[str] = field(
+        default="left",
+        metadata={
+            "help": "Prompt tokenizer padding side. Defaults to `left`. If the prompt is pre-pended to the codebooks hidden states, it should be padded on the left."
+        },
+    )
 
 
 @dataclass
@@ -330,6 +336,27 @@ class ParlerTTSTrainingArguments(Seq2SeqTrainingArguments):
         metadata={
             "help": (
                 "Number of subprocesses to use for evaluation data loading (PyTorch only). 0 means that the data will be loaded in the main process."
+            )
+        },
+    )
+    compute_clap_similarity_metric: bool = field(
+        default=True,
+        metadata={
+            "help": (
+                "Whether or not to compute the clap similarity metric between the description and the generation during evalution."
+            )
+        },
+    )
+    compute_noise_level_metric: bool = field(
+        default=True,
+        metadata={"help": ("Whether or not to compute the squim si-sdr measure of the generations.")},
+    )
+    noise_level_to_compute_clean_wer: float = field(
+        default=25,
+        metadata={
+            "help": (
+                "if `compute_noise_level_metric=True`, will compute a 'clean' WER on samples with generated noise higher than `noise_level_to_compute_clean_wer`."
+                "This is a proxy measure to compute WER on clean audios, provided that the model learn to generate clean audios."
             )
         },
     )

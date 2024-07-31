@@ -1863,6 +1863,12 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
             position_ids = attention_mask.long().cumsum(-1) - 1
             position_ids.masked_fill_(attention_mask == 0, 1)
 
+        position_ids = kwargs.get("position_ids", None)
+        if attention_mask is not None and position_ids is None:
+            # create position_ids on the fly for batch generation
+            position_ids = attention_mask.long().cumsum(-1) - 1
+            position_ids.masked_fill_(attention_mask == 0, 1)
+
         if past_key_values is not None:
             input_ids = input_ids[:, -1:]
             if position_ids is not None:
