@@ -397,8 +397,8 @@ class ParlerTTSAttention(nn.Module):
         bsz, tgt_len = hidden_states.shape[:2]
 
         # get query proj
-        query_states = self._shape_query(self.q_proj(hidden_states) * self.scaling, tgt_len, bsz)
-
+        query_states = self.q_proj(hidden_states) * self.scaling
+        query_states = self._shape_query(query_states, tgt_len, bsz)
         if self.rope_embeddings:
             query_states = apply_rotary_pos_emb(query_states, cos, sin)
 
