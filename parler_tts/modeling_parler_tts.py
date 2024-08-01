@@ -1878,7 +1878,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
             prompt_hidden_states = None
 
         return {
-            "input_ids": input_ids.contiguous(),
+            "input_ids": input_ids.contiguous(), # `contiguous()` needed for compilation use cases
             "attention_mask": attention_mask,
             "position_ids": position_ids,
             "encoder_hidden_states": encoder_hidden_states,
