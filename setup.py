@@ -18,7 +18,7 @@ import setuptools
 
 
 _deps = [
-    "transformers @ git+https://github.com/huggingface/transformers@72fb02c47dbbe1999ae105319f24631cad6e2e00",
+    "transformers",
     "torch",
     "sentencepiece",
     "descript-audio-codec",
