@@ -548,9 +548,9 @@ class ParlerTTSFlashAttention2(ParlerTTSAttention):
             key_states = self._shape_key_value(self.k_proj(current_states), -1, bsz)
             value_states = self._shape_key_value(self.v_proj(current_states), -1, bsz)
 
-            if not is_cross_attention:
+            if not is_cross_attention and self.rope_embeddings:
                 # cached key states already have rope applied - only apply to new state
-                key_states = apply_rotary_pos_emb(key_states, cos, sin) if self.rope_embeddings else key_states
+                key_states = apply_rotary_pos_emb(key_states, cos, sin)
 
             if past_key_value is not None:
                 # save all key/value_states to cache to be re-used for fast auto-regressive generation
@@ -763,9 +763,9 @@ class ParlerTTSSdpaAttention(ParlerTTSAttention):
             key_states = self._shape_key_value(self.k_proj(current_states), -1, bsz)
             value_states = self._shape_key_value(self.v_proj(current_states), -1, bsz)
 
-            if not is_cross_attention:
+            if not is_cross_attention and self.rope_embeddings:
                 # cached key states already have rope applied - only apply to new state
-                key_states = apply_rotary_pos_emb(key_states, cos, sin) if self.rope_embeddings else key_states
+                key_states = apply_rotary_pos_emb(key_states, cos, sin)
 
             if past_key_value is not None:
                 # save all key/value_states to cache to be re-used for fast auto-regressive generation
