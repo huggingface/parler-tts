@@ -21,22 +21,24 @@ import os
 import re
 import sys
 import time
+from multiprocess import set_start_method
 from datetime import timedelta
+
+from tqdm import tqdm
 from pathlib import Path
 
-import datasets
 import torch
-import transformers
-from accelerate import Accelerator, skip_first_batches
-from accelerate.utils import AutocastKwargs, InitProcessGroupKwargs, set_seed
-from accelerate.utils.memory import release_memory
-from datasets import Dataset, DatasetDict, IterableDataset, concatenate_datasets
-from huggingface_hub import HfApi
 from torch.utils.data import DataLoader
-from tqdm import tqdm
+
+import datasets
+from datasets import DatasetDict, Dataset, IterableDataset, concatenate_datasets
+
+from huggingface_hub import HfApi
+
+import transformers
 from transformers import AutoFeatureExtractor, AutoTokenizer, HfArgumentParser
-from transformers.optimization import get_scheduler
 from transformers.trainer_pt_utils import LengthGroupedSampler
+from transformers.optimization import get_scheduler
 from transformers.utils import send_example_telemetry
 
 
@@ -348,8 +350,10 @@ def main():
     description_column_name = data_args.description_column_name
     prompt_column_name = data_args.prompt_column_name
     feature_extractor_input_name = feature_extractor.model_input_names[0]
+    audio_encoder_pad_token_id = config.decoder.pad_token_id
     audio_encoder_eos_token_id = config.decoder.eos_token_id
     audio_encoder_bos_token_id = model.generation_config.decoder_start_token_id
+    max_length = model.generation_config.max_length
     num_codebooks = model.decoder.config.num_codebooks
     bandwidth = model_args.bandwidth
     attn_implementation = model_args.attn_implementation
@@ -707,7 +711,7 @@ def main():
         steps_per_epoch = total_train_steps
 
     if training_args.eval_steps is None:
-        logger.info("eval_steps is not set, evaluating at the end of each epoch")
+        logger.info(f"eval_steps is not set, evaluating at the end of each epoch")
         eval_steps = steps_per_epoch
     else:
         eval_steps = training_args.eval_steps
@@ -1058,7 +1062,7 @@ def main():
 
                     for batch in tqdm(
                         validation_dataloader,
-                        desc="Evaluating - Inference ...",
+                        desc=f"Evaluating - Inference ...",
                         position=2,
                         disable=not accelerator.is_local_main_process,
                     ):
@@ -1080,7 +1084,7 @@ def main():
                         # generation
                         for batch in tqdm(
                             validation_dataloader,
-                            desc="Evaluating - Generation ...",
+                            desc=f"Evaluating - Generation ...",
                             position=2,
                             disable=not accelerator.is_local_main_process,
                         ):
