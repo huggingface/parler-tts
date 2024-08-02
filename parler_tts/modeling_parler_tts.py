@@ -3344,10 +3344,10 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                     )
                 if not self.prompt_cross_attention:
                     # when we prepend prompt_hidden_state to inputs_embeds, max_cache_len needs to be actualised
-                    # generation_config.max_length has already been increased by input_ids_seq_length which is
+                    # generation_config.max_length has already been increased by input_ids_length which is
                     # already counted in input_embeds_seq_length so we remove it
                     input_embeds_seq_length = model_kwargs["inputs_embeds"].shape[1]
-                    max_cache_len = generation_config.max_length + input_embeds_seq_length - input_ids_seq_length
+                    max_cache_len = generation_config.max_length + input_embeds_seq_length - input_ids_length
                 else:
                     max_cache_len = self.generation_config.max_length
                 model_kwargs["past_key_values"] = self._get_cache(
