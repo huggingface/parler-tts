@@ -78,7 +78,7 @@ class DACModel(PreTrainedModel):
             )
 
         for offset in range(0, input_length - step, stride):
-            padding_mask[..., offset : offset + chunk_length].bool()
+            mask = padding_mask[..., offset : offset + chunk_length].bool()
             frame = audio_data[:, :, offset : offset + chunk_length]
 
             scale = None

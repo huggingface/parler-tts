@@ -248,7 +248,7 @@ class ParlerTTSSinusoidalPositionalEmbedding(nn.Module):
     def forward(self, input_ids: torch.Tensor, past_key_values_length: int = 0):
         bsz, seq_len, _ = input_ids.size()
         # Create the position ids from the input token ids.
-        position_ids = (torch.arange(seq_len, device=input_ids.device) + past_key_values_length).to(input_ids.device)
+        position_ids = torch.arange(seq_len, device=input_ids.device) + past_key_values_length
         # expand embeddings if needed
         if seq_len > self.weights.size(0):
             self.make_weights(seq_len + self.offset, self.embedding_dim)
@@ -1318,8 +1318,10 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
         if inputs_embeds is None:
             inputs_embeds = sum([self.embed_tokens[codebook](input[:, codebook]) for codebook in range(num_codebooks)])
 
+        prepended_sequence_length = 0
         # if prompt_hidden_states, fuse to inputs_embeds and update input shape
         if prompt_hidden_states is not None:
+            prepended_sequence_length = prompt_hidden_states.shape[-2]
             inputs_embeds = torch.cat([prompt_hidden_states, inputs_embeds], dim=1)
 
         return_legacy_cache = False
@@ -1345,7 +1347,7 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
 
         if cache_position is None:
             cache_position = torch.arange(
-                past_key_values_length, past_key_values_length + input_shape[1], device=inputs_embeds.device
+                past_key_values_length, past_key_values_length + input_shape[1] + prepended_sequence_length, device=inputs_embeds.device
             )
 
         if position_ids is None:
@@ -1361,7 +1363,7 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
             logger.warning_once(
                 "`prompt_attention_mask` is specified but `attention_mask` is not. A full `attention_mask` will be created. Make sure this is the intended behaviour."
             )
-            if past_key_values is None:
+            if past_key_values_length == 0:
                 attention_mask = torch.cat(
                     [
                         prompt_attention_mask,
@@ -2699,7 +2701,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
 
         if (labels is not None) and (decoder_input_ids is None and decoder_inputs_embeds is None):
             decoder_input_ids = shift_tokens_right(
-                labels, self.config.decoder.pad_token_id, self.config.decoder.decoder_start_token_id
+                labels, self.config.pad_token_id, self.config.decoder_start_token_id
             ).transpose(1, 2)
 
         elif decoder_input_ids is None and decoder_inputs_embeds is None:
