@@ -1,4 +1,6 @@
 import dac
+from transformers import AutoConfig, AutoModel, EncodecFeatureExtractor
+
 from parler_tts import DACConfig, DACModel
 from transformers import AutoConfig, AutoModel
 from transformers import EncodecFeatureExtractor

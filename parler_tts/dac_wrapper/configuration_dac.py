@@ -1,5 +1,5 @@
+
 from transformers import PretrainedConfig
-from typing import List
 
 
 class DACConfig(PretrainedConfig):

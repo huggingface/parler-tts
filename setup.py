@@ -13,11 +13,12 @@
 # limitations under the License.
 
 import os
+
 import setuptools
 
 
 _deps = [
-    "transformers>=4.39.0,<4.41.0",
+    "transformers>=4.43.0,<=4.43.3",
     "torch",
     "sentencepiece",
     "descript-audio-codec",
@@ -60,7 +61,7 @@ setuptools.setup(
     packages=setuptools.find_packages(),
     install_requires=_deps,
     extras_require={
-        "dev": [_extras_dev_deps],
-        "train": [_extras_training_deps],
+        "dev": _extras_dev_deps,
+        "train": _extras_training_deps,
     },
 )

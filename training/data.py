@@ -1,15 +1,14 @@
 import logging
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Union, Set
+from typing import Dict, List, Optional, Set, Union
 
-import torch
-import numpy as np
 import datasets
-from datasets import load_dataset, Dataset, IterableDataset, interleave_datasets, concatenate_datasets
-from transformers import AutoFeatureExtractor, AutoTokenizer
-from tqdm import tqdm
-
+import numpy as np
+import torch
 from accelerate import Accelerator
+from datasets import Dataset, IterableDataset, concatenate_datasets, interleave_datasets, load_dataset
+from tqdm import tqdm
+from transformers import AutoFeatureExtractor, AutoTokenizer
 
 
 @dataclass
