@@ -9,7 +9,7 @@ This repository contains the inference and training code for Parler-TTS. It is d
 > [!IMPORTANT]
 > **08/08/2024:** We are proud to release two new Parler-TTS checkpoints:
 > 1. [Parler-TTS Mini](https://huggingface.co/parler-tts/parler-tts-mini-v1), an 880M parameter model.
-> 2. [Parler-TTS Large](https://huggingface.co/parler-tts/parler-tts-large-v1), a 2.3 billion-parameter model.
+> 2. [Parler-TTS Large](https://huggingface.co/parler-tts/parler-tts-large-v1), a 2.3B parameter model.
 >
 > These checkpoints have been trained on 45k hours of audiobook data.
 >

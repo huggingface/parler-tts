@@ -1,6 +1,6 @@
 # Inference tips
 
-Parler-TTS benefits from a number of optimizations that can make the model up to 4 times faster. Add to this the ability to stream audio as it's being generated, and you can achieve time-to-first-audio in under 500ms on a modern GPU.
+Parler-TTS benefits from a number of optimizations that can make the model up to 4x faster. Add to this the ability to stream audio as it's being generated, and you can achieve time-to-first audio in under 500ms on a modern GPU.
 
 ## 📖 Quick Index
 * [Efficient Attention Implementation](#efficient-attention-implementations)
@@ -12,14 +12,14 @@ Parler-TTS benefits from a number of optimizations that can make the model up to
 
 Parler-TTS supports [SDPA](https://pytorch.org/docs/master/generated/torch.nn.functional.scaled_dot_product_attention.html) and [Flash Attention 2](https://github.com/Dao-AILab/flash-attention).  
 
-SDPA is used by default and speeds up generation time by up to 1.4 times compared with eager attention.
+SDPA is used by default and speeds up generation time by up to 1.4x compared with eager attention.
 
 To switch between attention implementations, simply specify `attn_implementation=attn_implementation` when loading the checkpoints:
 
 ```py
 from parler_tts import ParlerTTSForConditionalGeneration
 
-torch_device = "cuda:0"
+torch_device = "cuda:0" # use "mps" for Mac
 torch_dtype = torch.bfloat16
 model_name = "parler-tts/parler-tts-mini-v1"
 
@@ -103,7 +103,7 @@ from parler_tts import ParlerTTSForConditionalGeneration, ParlerTTSStreamer
 from transformers import AutoTokenizer
 from threading import Thread
 
-torch_device = "cuda:0"
+torch_device = "cuda:0" # Use "mps" for Mac 
 torch_dtype = torch.bfloat16
 model_name = "parler-tts/parler-tts-mini-v1"
 
