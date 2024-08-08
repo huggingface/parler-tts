@@ -1,4 +1,4 @@
-__version__ = "0.1"
+__version__ = "0.2"
 
 
 from transformers import AutoConfig, AutoModel
@@ -12,6 +12,7 @@ from .modeling_parler_tts import (
     build_delay_pattern_mask,
 )
 
+from .streamer import ParlerTTSStreamer
 
 AutoConfig.register("dac", DACConfig)
 AutoModel.register(DACConfig, DACModel)

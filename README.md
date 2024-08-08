@@ -7,15 +7,23 @@ Contrarily to other TTS models, Parler-TTS is a **fully open-source** release. A
 This repository contains the inference and training code for Parler-TTS. It is designed to accompany the [Data-Speech](https://github.com/huggingface/dataspeech) repository for dataset annotation.
 
 > [!IMPORTANT]
-> We're proud to release [Parler-TTS Mini v0.1](https://huggingface.co/parler-tts/parler_tts_mini_v0.1), our first 600M parameter model, trained on 10.5K hours of audio data.
-> In the coming weeks, we'll be working on scaling up to 50k hours of data, in preparation for the v1 model.
+> **08/08/2024:** We are proud to release two new Parler-TTS checkpoints:
+> 1. [Parler-TTS Mini](https://huggingface.co/parler-tts/parler-tts-mini-v1), an 880M parameter model.
+> 2. [Parler-TTS Large](https://huggingface.co/parler-tts/parler-tts-large-v1), a 2.3B parameter model.
+>
+> These checkpoints have been trained on 45k hours of audiobook data.
+>
+> In addition, the code is optimized for much faster generation: we've added SDPA and Flash Attention 2 compatibility, as well as the ability to compile the model.
 
 ## 📖 Quick Index
 * [Installation](#installation)
 * [Usage](#usage)
+  - [🎲 Using a random voice](#-random-voice)
+  - [🎯 Using a specific speaker](#-using-a-specific-speaker)
 * [Training](#training)
-* [Demo](https://huggingface.co/spaces/parler-tts/parler_tts_mini)
+* [Demo](https://huggingface.co/spaces/parler-tts/parler_tts)
 * [Model weights and datasets](https://huggingface.co/parler-tts)
+* [Optimizing inference](#-optimizing-inference-speed)
 
 ## Installation
 
@@ -34,43 +42,85 @@ pip3 install --pre torch torchaudio --index-url https://download.pytorch.org/whl
 ## Usage
 
 > [!TIP]
-> You can directly try it out in an interactive demo [here](https://huggingface.co/spaces/parler-tts/parler_tts_mini)!
+> You can directly try it out in an interactive demo [here](https://huggingface.co/spaces/parler-tts/parler_tts)!
 
-Using Parler-TTS is as simple as "bonjour". Simply use the following inference snippet.
+Using Parler-TTS is as simple as "bonjour". Simply install the library once:
+
+```sh
+pip install git+https://github.com/huggingface/parler-tts.git
+```
+
+### 🎲 Random voice
+
+
+**Parler-TTS** has been trained to generate speech with features that can be controlled with a simple text prompt, for example:
 
 ```py
+import torch
 from parler_tts import ParlerTTSForConditionalGeneration
 from transformers import AutoTokenizer
 import soundfile as sf
-import torch
 
-device = "cpu"
-if torch.cuda.is_available():
-    device = "cuda:0"
-if torch.backends.mps.is_available():
-    device = "mps"
-if torch.xpu.is_available():
-    device = "xpu"
-torch_dtype = torch.float16 if device != "cpu" else torch.float32
+device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-model = ParlerTTSForConditionalGeneration.from_pretrained("parler-tts/parler_tts_mini_v0.1", torch_dtype=torch_dtype).to(device)
-
-tokenizer = AutoTokenizer.from_pretrained("parler-tts/parler_tts_mini_v0.1")
+model = ParlerTTSForConditionalGeneration.from_pretrained("parler-tts/parler-tts-mini-v1").to(device)
+tokenizer = AutoTokenizer.from_pretrained("parler-tts/parler-tts-mini-v1")
 
 prompt = "Hey, how are you doing today?"
-description = "A female speaker with a slightly low-pitched voice delivers her words quite expressively, in a very confined sounding environment with clear audio quality. She speaks very fast."
+description = "A female speaker delivers a slightly expressive and animated speech with a moderate speed and pitch. The recording is of very high quality, with the speaker's voice sounding clear and very close up."
 
 input_ids = tokenizer(description, return_tensors="pt").input_ids.to(device)
 prompt_input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(device)
 
-generation = model.generate(input_ids=input_ids, prompt_input_ids=prompt_input_ids).to(torch.float32)
+generation = model.generate(input_ids=input_ids, prompt_input_ids=prompt_input_ids)
 audio_arr = generation.cpu().numpy().squeeze()
 sf.write("parler_tts_out.wav", audio_arr, model.config.sampling_rate)
 ```
 
+### 🎯 Using a specific speaker
+
+To ensure speaker consistency across generations, this checkpoint was also trained on 34 speakers, characterized by name (e.g. Jon, Lea, Gary, Jenna, Mike, Laura).
+
+To take advantage of this, simply adapt your text description to specify which speaker to use: `Jon's voice is monotone yet slightly fast in delivery, with a very close recording that almost has no background noise.`
+
+```py
+import torch
+from parler_tts import ParlerTTSForConditionalGeneration
+from transformers import AutoTokenizer
+import soundfile as sf
+
+device = "cuda:0" if torch.cuda.is_available() else "cpu"
+
+model = ParlerTTSForConditionalGeneration.from_pretrained("parler-tts/parler-tts-mini-v1").to(device)
+tokenizer = AutoTokenizer.from_pretrained("parler-tts/parler-tts-mini-v1")
+
+prompt = "Hey, how are you doing today?"
+description = "Jon's voice is monotone yet slightly fast in delivery, with a very close recording that almost has no background noise."
+
+input_ids = tokenizer(description, return_tensors="pt").input_ids.to(device)
+prompt_input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(device)
+
+generation = model.generate(input_ids=input_ids, prompt_input_ids=prompt_input_ids)
+audio_arr = generation.cpu().numpy().squeeze()
+sf.write("parler_tts_out.wav", audio_arr, model.config.sampling_rate)
+```
+
+**Tips**:
+* Include the term "very clear audio" to generate the highest quality audio, and "very noisy audio" for high levels of background noise
+* Punctuation can be used to control the prosody of the generations, e.g. use commas to add small breaks in speech
+* The remaining speech features (gender, speaking rate, pitch and reverberation) can be controlled directly through the prompt
+
+### ✨ Optimizing Inference Speed
+
+We've set up an [inference guide](INFERENCE.md) to make generation faster. Think SDPA, torch.compile and streaming!
+
+
 https://github.com/huggingface/parler-tts/assets/52246514/251e2488-fe6e-42c1-81cd-814c5b7795b0
 
 ## Training
+> [!WARNING]
+> The training guide has yet to be adapted to the newest checkpoints.
+
 <a target="_blank" href="https://colab.research.google.com/github/ylacombe/scripts_and_notebooks/blob/main/Finetuning_Parler_TTS_on_a_single_speaker_dataset.ipynb"> 
   <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/> 
 </a>
