@@ -35,7 +35,7 @@ model = ParlerTTSForConditionalGeneration.from_pretrained(
 
 [Compiling](https://pytorch.org/docs/stable/generated/torch.compile.html) the forward method of Parler can speed up generation time by up to 4.5x.
 
-As an indication, `mode=default` brings a speed-up of 1.4 times compared to no compilation, while a more advanced mode brings much faster generation, at the cost of a longer compilation time and the need to generate twice to see the benefits of compilation.
+As an indication, `mode=default` brings a speed-up of 1.4 times compared to no compilation, while `mode="reduce-overhead"` brings much faster generation, at the cost of a longer compilation time and the need to generate twice to see the benefits of compilation.
 
 ```py
 import torch
@@ -64,7 +64,7 @@ model.forward = torch.compile(model.forward, mode=compile_mode)
 # warmup
 inputs = tokenizer("This is for compilation", return_tensors="pt", padding="max_length", max_length=max_length).to(device)
 
-model_kwargs = {**inputs, prompt_input_ids: inputs.input_ids, prompt_attention_mask: inputs.attention_mask, }
+model_kwargs = {**inputs, "prompt_input_ids": inputs.input_ids, "prompt_attention_mask": inputs.attention_mask, }
 
 n_steps = 1 if compile_mode == "default" else 2
 for _ in range(n_steps):
@@ -177,11 +177,11 @@ model = ParlerTTSForConditionalGeneration.from_pretrained(repo_id).to("cuda")
 tokenizer = AutoTokenizer.from_pretrained(repo_id, padding_side="left")
 feature_extractor = AutoFeatureExtractor.from_pretrained(repo_id)
 
-description = "A male speaker with a monotone and high-pitched voice is delivering his speech at a really low speed in a confined environment."
-input_text = "Hey, how are you doing?"
+input_text = ["Hey, how are you doing?", "I'm not sure how to feel about it."]
+description = 2 * ["A male speaker with a monotone and high-pitched voice is delivering his speech at a really low speed in a confined environment."]
 
-inputs = tokenizer([description, description], return_tensors="pt", padding=True).to("cuda")
-prompt = tokenizer([input_text, "I'm not sure how to feel about it."], return_tensors="pt", padding=True).to("cuda")
+inputs = tokenizer(description, return_tensors="pt", padding=True).to("cuda")
+prompt = tokenizer(input_text, return_tensors="pt", padding=True).to("cuda")
 
 set_seed(0)
 generation = model.generate(
