@@ -21,8 +21,9 @@ This repository contains the inference and training code for Parler-TTS. It is d
   - [🎲 Using a random voice](#-random-voice)
   - [🎯 Using a specific speaker](#-using-a-specific-speaker)
 * [Training](#training)
-* [Demo](https://huggingface.co/spaces/parler-tts/parler_tts_mini)
+* [Demo](https://huggingface.co/spaces/parler-tts/parler_tts)
 * [Model weights and datasets](https://huggingface.co/parler-tts)
+* [Optimizing inference](INFERENCE.md)
 
 ## Installation
 

@@ -12,6 +12,7 @@ from .modeling_parler_tts import (
     build_delay_pattern_mask,
 )
 
+from .streamer import ParlerTTSStreamer
 
 AutoConfig.register("dac", DACConfig)
 AutoModel.register(DACConfig, DACModel)
