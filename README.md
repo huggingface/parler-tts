@@ -18,6 +18,8 @@ This repository contains the inference and training code for Parler-TTS. It is d
 ## 📖 Quick Index
 * [Installation](#installation)
 * [Usage](#usage)
+  - [🎲 Using a random voice](#🎲-random-voice)
+  - [🎯 Using a specific speaker](#🎯-using-a-specific-speaker)
 * [Training](#training)
 * [Demo](https://huggingface.co/spaces/parler-tts/parler_tts_mini)
 * [Model weights and datasets](https://huggingface.co/parler-tts)
