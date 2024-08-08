@@ -23,7 +23,7 @@ This repository contains the inference and training code for Parler-TTS. It is d
 * [Training](#training)
 * [Demo](https://huggingface.co/spaces/parler-tts/parler_tts)
 * [Model weights and datasets](https://huggingface.co/parler-tts)
-* [Optimizing inference](INFERENCE.md)
+* [Optimizing inference](#-optimizing-inference-speed)
 
 ## Installation
 
@@ -106,10 +106,14 @@ sf.write("parler_tts_out.wav", audio_arr, model.config.sampling_rate)
 ```
 
 **Tips**:
-* We've set up an [inference guide](INFERENCE.md) to make generation faster. Think SDPA, torch.compile and streaming!
 * Include the term "very clear audio" to generate the highest quality audio, and "very noisy audio" for high levels of background noise
 * Punctuation can be used to control the prosody of the generations, e.g. use commas to add small breaks in speech
 * The remaining speech features (gender, speaking rate, pitch and reverberation) can be controlled directly through the prompt
+
+### ✨ Optimizing Inference Speed
+
+We've set up an [inference guide](INFERENCE.md) to make generation faster. Think SDPA, torch.compile and streaming!
+
 
 https://github.com/huggingface/parler-tts/assets/52246514/251e2488-fe6e-42c1-81cd-814c5b7795b0
 
