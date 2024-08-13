@@ -121,6 +121,8 @@ https://github.com/huggingface/parler-tts/assets/52246514/251e2488-fe6e-42c1-81c
   <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/> 
 </a>
 
+## Training
+
 The [training folder](/training/) contains all the information to train or fine-tune your own Parler-TTS model. It consists of:
 - [1. An introduction to the Parler-TTS architecture](/training/README.md#1-architecture)
 - [2. The first steps to get started](/training/README.md#2-getting-started)
