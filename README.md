@@ -117,10 +117,6 @@ We've set up an [inference guide](INFERENCE.md) to make generation faster. Think
 
 https://github.com/huggingface/parler-tts/assets/52246514/251e2488-fe6e-42c1-81cd-814c5b7795b0
 
-## Training
-> [!WARNING]
-> The training guide has yet to be adapted to the newest checkpoints.
-
 <a target="_blank" href="https://colab.research.google.com/github/ylacombe/scripts_and_notebooks/blob/main/Finetuning_Parler_TTS_on_a_single_speaker_dataset.ipynb"> 
   <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/> 
 </a>
@@ -131,10 +127,10 @@ The [training folder](/training/) contains all the information to train or fine-
 - [3. A training guide](/training/README.md#3-training)
 
 > [!IMPORTANT]
-> **TL;DR:** After having followed the [installation steps](/training/README.md#requirements), you can reproduce the Parler-TTS Mini v0.1 training recipe with the following command line:
+> **TL;DR:** After having followed the [installation steps](/training/README.md#requirements), you can reproduce the Parler-TTS Mini v1 training recipe with the following command line:
 
 ```sh
-accelerate launch ./training/run_parler_tts_training.py ./helpers/training_configs/starting_point_0.01.json
+accelerate launch ./training/run_parler_tts_training.py ./helpers/training_configs/starting_point_v1.json
 ```
 
 ## Acknowledgements
