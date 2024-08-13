@@ -117,11 +117,11 @@ We've set up an [inference guide](INFERENCE.md) to make generation faster. Think
 
 https://github.com/huggingface/parler-tts/assets/52246514/251e2488-fe6e-42c1-81cd-814c5b7795b0
 
+## Training
+
 <a target="_blank" href="https://colab.research.google.com/github/ylacombe/scripts_and_notebooks/blob/main/Finetuning_Parler_TTS_on_a_single_speaker_dataset.ipynb"> 
   <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/> 
 </a>
-
-## Training
 
 The [training folder](/training/) contains all the information to train or fine-tune your own Parler-TTS model. It consists of:
 - [1. An introduction to the Parler-TTS architecture](/training/README.md#1-architecture)
@@ -134,6 +134,9 @@ The [training folder](/training/) contains all the information to train or fine-
 ```sh
 accelerate launch ./training/run_parler_tts_training.py ./helpers/training_configs/starting_point_v1.json
 ```
+
+> [!IMPORTANT]
+> You can also follow [this fine-tuning guide](https://colab.research.google.com/github/ylacombe/scripts_and_notebooks/blob/main/Finetuning_Parler_TTS_on_a_single_speaker_dataset.ipynb) on a mono-speaker dataset example.
 
 ## Acknowledgements
 
