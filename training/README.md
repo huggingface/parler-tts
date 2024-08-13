@@ -4,13 +4,10 @@
   <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/> 
 </a>
 
-> [!WARNING]
-> The training guide has yet to be adapted to the newest checkpoints.
-
-**TL;DR:** After having followed the [installation steps](#requirements), you can reproduce the [Parler-TTS Mini v0.1](https://huggingface.co/parler-tts/parler_tts_mini_v0.1) training recipe with the following command line:
+**TL;DR:** After having followed the [installation steps](#requirements), you can reproduce the [Parler-TTS Mini v1](https://huggingface.co/parler-tts/parler-tts-mini-v1) training recipe with the following command line:
 
 ```sh
-accelerate launch ./training/run_parler_tts_training.py ./helpers/training_configs/starting_point_0.01.json
+accelerate launch ./training/run_parler_tts_training.py ./helpers/training_configs/starting_point_v1.json
 ```
 
 -------------
