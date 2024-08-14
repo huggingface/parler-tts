@@ -871,7 +871,7 @@ def main():
                     encoder_outputs = model.module.text_encoder(
                         input_ids=batch.get("input_ids"), attention_mask=batch.get("attention_mask", None)
                     )
-                # we optionnally project last_hidden_state to avoid recomputing every time
+                # we optionally project last_hidden_state to avoid recomputing every time
                 encoder_hidden_states = encoder_outputs.last_hidden_state
                 if (
                     config.text_encoder.hidden_size != config.decoder.hidden_size
@@ -915,7 +915,7 @@ def main():
                     encoder_outputs = model.module.text_encoder(
                         input_ids=batch.get("input_ids"), attention_mask=batch.get("attention_mask", None)
                     )
-                # we optionnally project last_hidden_state to avoid recomputing every time
+                # we optionally project last_hidden_state to avoid recomputing every time
                 encoder_hidden_states = encoder_outputs.last_hidden_state
                 if (
                     config.text_encoder.hidden_size != config.decoder.hidden_size
