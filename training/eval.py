@@ -115,23 +115,27 @@ def wer(
             normalized_references.append(norm_ref)
 
     word_error = 100
-    if len(normalized_references) > 0:
-        word_error = 100 * metric.compute(predictions=normalized_predictions, references=normalized_references)
-
     clean_word_error = None
     noisy_word_error = None
     percent_clean_samples = 0
-    if noise_level_to_compute_clean_wer and si_sdr_measures:
-        si_sdr_measures = np.array(si_sdr_measures)
-        mask = si_sdr_measures >= noise_level_to_compute_clean_wer
-        if mask.any():
-            clean_word_error = 100 * metric.compute(
-                predictions=np.array(normalized_predictions)[mask], references=np.array(normalized_references)[mask]
-            )
-            noisy_word_error = 100 * metric.compute(
-                predictions=np.array(normalized_predictions)[~mask], references=np.array(normalized_references)[~mask]
-            )
-            percent_clean_samples = mask.sum() / len(mask)
+    if len(normalized_references) > 0:
+        word_error = 100 * metric.compute(predictions=normalized_predictions, references=normalized_references)
+        
+
+        if noise_level_to_compute_clean_wer and si_sdr_measures:
+            si_sdr_measures = np.array(si_sdr_measures)
+            mask = si_sdr_measures >= noise_level_to_compute_clean_wer
+            if mask.any():
+                clean_word_error = 100 * metric.compute(
+                    predictions=np.array(normalized_predictions)[mask], references=np.array(normalized_references)[mask]
+                )
+                if not mask.all():
+                    noisy_word_error = 100 * metric.compute(
+                        predictions=np.array(normalized_predictions)[~mask], references=np.array(normalized_references)[~mask]
+                    )
+                else:
+                    noisy_word_error = 0
+                percent_clean_samples = mask.sum() / len(mask)
 
     asr_pipeline.model.to("cpu")
     asr_pipeline = release_memory(asr_pipeline)
