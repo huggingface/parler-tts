@@ -1,37 +1,39 @@
-import argparse
-import os
-
+from parler_tts import ParlerTTSForCausalLM, ParlerTTSForConditionalGeneration, ParlerTTSDecoderConfig
 from transformers import AutoConfig
-
-from parler_tts import ParlerTTSDecoderConfig, ParlerTTSForCausalLM, ParlerTTSForConditionalGeneration
+import os
+import argparse
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("save_directory", type=str, help="Directory where to save the model and the decoder.")
+    parser.add_argument("--text_model", type=str, help="Repository id or path to the text encoder.")
+    parser.add_argument("--audio_model", type=str, help="Repository id or path to the audio encoder.")
+
     args = parser.parse_args()
 
-    text_model = "google-t5/t5-small"
-    encodec_version = "facebook/encodec_24khz"
+    text_model = args.text_model
+    encodec_version = args.audio_model
 
     t5 = AutoConfig.from_pretrained(text_model)
     encodec = AutoConfig.from_pretrained(encodec_version)
 
     encodec_vocab_size = encodec.codebook_size
-    num_codebooks = 8
+    num_codebooks = encodec.num_codebooks
     print("num_codebooks", num_codebooks)
 
     decoder_config = ParlerTTSDecoderConfig(
-        vocab_size=encodec_vocab_size + 1,
-        max_position_embeddings=2048,
-        num_hidden_layers=4,
-        ffn_dim=512,
-        num_attention_heads=8,
+        vocab_size=encodec_vocab_size + 64,  # + 64 instead of +1 to have a multiple of 64
+        max_position_embeddings=4096,  # 30 s = 2580
+        num_hidden_layers=30,
+        ffn_dim=6144,
+        num_attention_heads=24,
+        num_key_value_heads=24,
         layerdrop=0.0,
         use_cache=True,
         activation_function="gelu",
-        hidden_size=512,
-        dropout=0.0,
+        hidden_size=1536,
+        dropout=0.1,
         attention_dropout=0.0,
         activation_dropout=0.0,
         pad_token_id=encodec_vocab_size,
@@ -41,7 +43,6 @@ if __name__ == "__main__":
     )
 
     decoder = ParlerTTSForCausalLM(decoder_config)
-
     decoder.save_pretrained(os.path.join(args.save_directory, "decoder"))
 
     model = ParlerTTSForConditionalGeneration.from_sub_models_pretrained(
@@ -64,4 +65,4 @@ if __name__ == "__main__":
     model.config.pad_token_id = encodec_vocab_size
     model.config.decoder_start_token_id = encodec_vocab_size + 1
 
-    model.save_pretrained(os.path.join(args.save_directory, "tiny-model"))
+    model.save_pretrained(os.path.join(args.save_directory, "parler-tts-untrained-larger/"))
