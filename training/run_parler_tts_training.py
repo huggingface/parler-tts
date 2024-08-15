@@ -344,8 +344,8 @@ def main():
 
     # derive max & min input length for sample rate & max duration
     sampling_rate = feature_extractor.sampling_rate
-    max_target_length = data_args.max_duration_in_seconds * sampling_rate
-    min_target_length = data_args.min_duration_in_seconds * sampling_rate
+    max_target_length = int(data_args.max_duration_in_seconds * sampling_rate)
+    min_target_length = int(data_args.min_duration_in_seconds * sampling_rate)
     target_audio_column_name = data_args.target_audio_column_name
     description_column_name = data_args.description_column_name
     prompt_column_name = data_args.prompt_column_name
@@ -1069,6 +1069,7 @@ def main():
                         # Model forward
                         eval_metric = eval_step(batch, accelerator, autocast_kwargs)
                         eval_metric = accelerator.gather_for_metrics(eval_metric)
+                        eval_metric = {key: val.unsqueeze(0) if val.ndim == 0 else val for (key,val) in eval_metric.items()}
                         eval_metrics.append(eval_metric)
 
                     if training_args.predict_with_generate:
