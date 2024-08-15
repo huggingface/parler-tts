@@ -1,6 +1,6 @@
 # Training Parler-TTS
 
-<a target="_blank" href="https://colab.research.google.com/github/ylacombe/scripts_and_notebooks/blob/main/Finetuning_Parler_TTS_on_a_single_speaker_dataset.ipynb"> 
+<a target="_blank" href="https://github.com/ylacombe/scripts_and_notebooks/blob/main/Finetuning_Parler_TTS_v1_on_a_single_speaker_dataset.ipynb"> 
   <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/> 
 </a>
 
@@ -18,7 +18,7 @@ This sub-folder contains all the information to train or fine-tune your own Parl
 - [3. Training guide](#c-training)
 
 > [!IMPORTANT]
-> You can also follow [this fine-tuning guide](https://colab.research.google.com/github/ylacombe/scripts_and_notebooks/blob/main/Finetuning_Parler_TTS_on_a_single_speaker_dataset.ipynb) on a mono-speaker dataset example.
+> You can also follow [this fine-tuning guide](https://github.com/ylacombe/scripts_and_notebooks/blob/main/Finetuning_Parler_TTS_v1_on_a_single_speaker_dataset.ipynb) on a mono-speaker dataset example.
 
 ## 1. Architecture
 
