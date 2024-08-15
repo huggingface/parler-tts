@@ -114,7 +114,9 @@ def wer(
             normalized_predictions.append(norm_pred)
             normalized_references.append(norm_ref)
 
-    word_error = 100 * metric.compute(predictions=normalized_predictions, references=normalized_references)
+    word_error = 100
+    if len(normalized_references) > 0:
+        word_error = 100 * metric.compute(predictions=normalized_predictions, references=normalized_references)
 
     clean_word_error = None
     noisy_word_error = None
