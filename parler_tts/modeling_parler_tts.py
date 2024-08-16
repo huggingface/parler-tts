@@ -3387,7 +3387,8 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 )
 
         # build the delay pattern mask for offsetting each codebook prediction by 1 (this behaviour is specific to Parler-TTS)
-        input_ids, decoder_delay_pattern_mask = self.decoder.build_delay_pattern_mask(
+        # but don't overwrite the input_ids tensor with the delay pattern mask. We perform that later
+        _, decoder_delay_pattern_mask = self.decoder.build_delay_pattern_mask(
             input_ids,
             bos_token_id=generation_config._bos_token_tensor,
             pad_token_id=generation_config._pad_token_tensor,
