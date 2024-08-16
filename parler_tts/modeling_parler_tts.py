@@ -3443,6 +3443,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 generation_config=generation_config,
                 synced_gpus=synced_gpus,
                 streamer=streamer,
+                logits_warper=None,
                 **model_kwargs,
             )
 
