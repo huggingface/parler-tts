@@ -1422,17 +1422,6 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
 
         causal_mask = attention_mask
-        
-        # print(f"ParlerTTSDecoder:forward:rope_embeddings -> {self.rope_embeddings}")
-        # print(f"ParlerTTSDecoder:forward:prompt_attention_mask -> {prompt_attention_mask.shape}")
-        # print(f"ParlerTTSDecoder:forward:attention_mask -> {attention_mask.shape}")
-        # print(f"ParlerTTSDecoder:forward:inputs_embeds -> {inputs_embeds.shape}")
-        # print(f"ParlerTTSDecoder:forward:cache_position -> {cache_position}")
-        # print(f"ParlerTTSDecoder:forward:past_key_values -> {past_key_values.self_attention_cache.get_seq_length() if past_key_values is not None else None}")
-        # print(f"ParlerTTSDecoder:forward:output_attentions -> {output_attentions}")
-        # print(f"ParlerTTSDecoder:forward:causal_mask -> {causal_mask.shape}")
-        
-        
 
         if encoder_hidden_states is not None and encoder_attention_mask is not None:
             if self.encoder_attn_implementation == "flash_attention_2":
