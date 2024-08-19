@@ -1353,38 +1353,38 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        # NOTE: 1. As it is, the masked ids from the prompt will still count in the positions embeddings
-        # NOTE: 2. we want to concatenate the prompt attention mask and the decoder attention mask
-        # i.i.f `prompt_cross_attention=False`. ParlerTTSForConditionalGeneration's taking care of setting
-        # `prompt_attention_mask=None`
-        if prompt_attention_mask is not None and attention_mask is not None:
-            attention_mask = torch.cat([prompt_attention_mask, attention_mask], dim=1)
-        elif prompt_attention_mask is not None:
-            logger.warning_once(
-                "`prompt_attention_mask` is specified but `attention_mask` is not. A full `attention_mask` will be created. Make sure this is the intended behaviour."
-            )
-            if past_key_values_length == 0:
-                attention_mask = torch.cat(
-                    [
-                        prompt_attention_mask,
-                        torch.ones(input_shape, device=self.device, dtype=prompt_attention_mask.dtype),
-                    ],
-                    dim=1,
-                )
-            else:
-                # In the generation case of `prompt_cross_attention=True`, we need to recreate an attention mask from scratch
-                # to be able to prepend the prompt attention mask.
-                # Since we generate token per token, we can recompute the generated length from the information we have.
-                generated_length = past_key_values_length - prompt_attention_mask.shape[1] + 1
-                attention_mask = torch.cat(
-                    [
-                        prompt_attention_mask,
-                        torch.ones(
-                            (input_shape[0], generated_length), device=self.device, dtype=prompt_attention_mask.dtype
-                        ),
-                    ],
-                    dim=1,
-                )
+        # # NOTE: 1. As it is, the masked ids from the prompt will still count in the positions embeddings
+        # # NOTE: 2. we want to concatenate the prompt attention mask and the decoder attention mask
+        # # i.i.f `prompt_cross_attention=False`. ParlerTTSForConditionalGeneration's taking care of setting
+        # # `prompt_attention_mask=None`
+        # if prompt_attention_mask is not None and attention_mask is not None:
+        #     attention_mask = torch.cat([prompt_attention_mask, attention_mask], dim=1)
+        # elif prompt_attention_mask is not None:
+        #     logger.warning_once(
+        #         "`prompt_attention_mask` is specified but `attention_mask` is not. A full `attention_mask` will be created. Make sure this is the intended behaviour."
+        #     )
+        #     if past_key_values_length == 0:
+        #         attention_mask = torch.cat(
+        #             [
+        #                 prompt_attention_mask,
+        #                 torch.ones(input_shape, device=self.device, dtype=prompt_attention_mask.dtype),
+        #             ],
+        #             dim=1,
+        #         )
+        #     else:
+        #         # In the generation case of `prompt_cross_attention=True`, we need to recreate an attention mask from scratch
+        #         # to be able to prepend the prompt attention mask.
+        #         # Since we generate token per token, we can recompute the generated length from the information we have.
+        #         generated_length = past_key_values_length - prompt_attention_mask.shape[1] + 1
+        #         attention_mask = torch.cat(
+        #             [
+        #                 prompt_attention_mask,
+        #                 torch.ones(
+        #                     (input_shape[0], generated_length), device=self.device, dtype=prompt_attention_mask.dtype
+        #                 ),
+        #             ],
+        #             dim=1,
+        #         )
 
         input_shape = inputs_embeds.size()[:-1]
         cos, sin = None, None
@@ -1421,13 +1421,18 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
 
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
 
-        causal_mask = self._update_causal_mask(
-            attention_mask,
-            inputs_embeds,
-            cache_position,
-            past_key_values.self_attention_cache if past_key_values is not None else None,
-            output_attentions,
-        )
+        causal_mask = attention_mask
+        
+        # print(f"ParlerTTSDecoder:forward:rope_embeddings -> {self.rope_embeddings}")
+        # print(f"ParlerTTSDecoder:forward:prompt_attention_mask -> {prompt_attention_mask.shape}")
+        # print(f"ParlerTTSDecoder:forward:attention_mask -> {attention_mask.shape}")
+        # print(f"ParlerTTSDecoder:forward:inputs_embeds -> {inputs_embeds.shape}")
+        # print(f"ParlerTTSDecoder:forward:cache_position -> {cache_position}")
+        # print(f"ParlerTTSDecoder:forward:past_key_values -> {past_key_values.self_attention_cache.get_seq_length() if past_key_values is not None else None}")
+        # print(f"ParlerTTSDecoder:forward:output_attentions -> {output_attentions}")
+        # print(f"ParlerTTSDecoder:forward:causal_mask -> {causal_mask.shape}")
+        
+        
 
         if encoder_hidden_states is not None and encoder_attention_mask is not None:
             if self.encoder_attn_implementation == "flash_attention_2":
@@ -2579,6 +2584,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         self,
         input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.BoolTensor] = None,
+        decoder_casual_mask: Optional[torch.BoolTensor] = None,
         input_values: Optional[torch.FloatTensor] = None,
         padding_mask: Optional[torch.BoolTensor] = None,
         decoder_input_ids: Optional[torch.LongTensor] = None,
@@ -2727,7 +2733,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         # Decode
         decoder_outputs = self.decoder(
             input_ids=decoder_input_ids,
-            attention_mask=decoder_attention_mask,
+            attention_mask=decoder_casual_mask,
             position_ids=decoder_position_ids,
             encoder_hidden_states=encoder_hidden_states,
             encoder_attention_mask=attention_mask,
@@ -2848,6 +2854,57 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                     (input_shape[0], generated_length), device=self.device, dtype=prompt_attention_mask.dtype
                 )
 
+        past_key_values_length = 0
+        if cache_position is not None:
+            past_key_values_length = cache_position[0]
+        elif past_key_values is not None:
+            past_key_values_length = past_key_values.get_seq_length()
+
+
+        # NOTE: 1. As it is, the masked ids from the prompt will still count in the positions embeddings
+        # NOTE: 2. we want to concatenate the prompt attention mask and the decoder attention mask
+        # i.i.f `prompt_cross_attention=False`. ParlerTTSForConditionalGeneration's taking care of setting
+        # `prompt_attention_mask=None`
+        if prompt_attention_mask is not None and decoder_attention_mask is not None:
+            causual_decoder_attention_mask = torch.cat([prompt_attention_mask, decoder_attention_mask], dim=1)
+        elif prompt_attention_mask is not None:
+            logger.warning_once(
+                "`prompt_attention_mask` is specified but `attention_mask` is not. A full `attention_mask` will be created. Make sure this is the intended behaviour."
+            )
+            if past_key_values_length == 0:
+                causual_decoder_attention_mask = torch.cat(
+                    [
+                        prompt_attention_mask,
+                        torch.ones(input_shape, device=self.device, dtype=prompt_attention_mask.dtype),
+                    ],
+                    dim=1,
+                )
+            else:
+                # In the generation case of `prompt_cross_attention=True`, we need to recreate an attention mask from scratch
+                # to be able to prepend the prompt attention mask.
+                # Since we generate token per token, we can recompute the generated length from the information we have.
+                generated_length = past_key_values_length - prompt_attention_mask.shape[1] + 1
+                causual_decoder_attention_mask = torch.cat(
+                    [
+                        prompt_attention_mask,
+                        torch.ones(
+                            (input_shape[0], generated_length), device=self.device, dtype=prompt_attention_mask.dtype
+                        ),
+                    ],
+                    dim=1,
+                )
+                
+        actual_input_embs = inputs_embeds[:, -1:,:] if past_key_values_length > 0 else inputs_embeds            
+
+        casual_mask = self.decoder.model.decoder._update_causal_mask(
+            causual_decoder_attention_mask,
+            actual_input_embs,
+            cache_position,
+            past_key_values.self_attention_cache if past_key_values is not None else None,
+            False,
+        )
+
+
         return {
             "input_ids": None,  # encoder_outputs is defined. input_ids not needed
             "encoder_outputs": encoder_outputs,
@@ -2855,6 +2912,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             "decoder_input_ids": decoder_input_ids.contiguous(),
             "attention_mask": attention_mask,
             "decoder_attention_mask": decoder_attention_mask,
+            "decoder_casual_mask": casual_mask,
             "head_mask": head_mask,
             "decoder_head_mask": decoder_head_mask,
             "cross_attn_head_mask": cross_attn_head_mask,
