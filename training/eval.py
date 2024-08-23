@@ -58,6 +58,7 @@ def si_sdr(audios, device, input_sampling_rate=44100):
 
     def apply_squim(waveform):
         with torch.no_grad():
+            waveform = torch.tensor(waveform).unsqueeze(0).to(device)
             waveform = waveform[:, : min(max_audio_length, waveform.shape[1])]
             _, _, sdr_sample = model(waveform)
             sdr_sample = sdr_sample.cpu()[0]
