@@ -26,7 +26,7 @@ examples = [
         "A female speaker with a slightly low-pitched, quite monotone voice delivers her words at a slightly faster-than-average pace in a confined space with very clear audio.",
     ],
     [
-        "Montrose also, after having experienced still more variety of good and bad fortune, threw down his arms, and retired out of the kingdom.	",
+        "Montrose also, after having experienced still more variety of good and bad fortune, threw down his arms, and retired out of the kingdom.\t",
         "A male speaker with a slightly high-pitched voice delivering his words at a slightly slow pace in a small, confined space with a touch of background noise and a quite monotone tone.",
     ],
     [
@@ -37,14 +37,15 @@ examples = [
 
 
 def gen_tts(text, description):
-    inputs = tokenizer(description, return_tensors="pt").to(device)
-    prompt = tokenizer(text, return_tensors="pt").to(device)
+    with torch.no_grad():
+        inputs = tokenizer(description, return_tensors="pt").to(device)
+        prompt = tokenizer(text, return_tensors="pt").to(device)
 
-    set_seed(SEED)
-    generation = model.generate(
-        input_ids=inputs.input_ids, prompt_input_ids=prompt.input_ids, do_sample=True, temperature=1.0
-    )
-    audio_arr = generation.cpu().numpy().squeeze()
+        set_seed(SEED)
+        generation = model.generate(
+            input_ids=inputs.input_ids, prompt_input_ids=prompt.input_ids, do_sample=True, temperature=1.0
+        )
+        audio_arr = generation.cpu().numpy().squeeze()
 
     return (SAMPLE_RATE, audio_arr)
 
@@ -102,3 +103,4 @@ with gr.Blocks(css=css) as block:
 
 block.queue()
 block.launch(share=True)
+
