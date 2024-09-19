@@ -3022,6 +3022,11 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         # 3. make sure that encoder returns `ModelOutput`
         model_input_name = model_input_name if model_input_name is not None else self.audio_encoder.main_input_name
         encoder_kwargs["return_dict"] = True
+        
+        if "num_quantizers" in encoder_signature:
+            encoder_kwargs["num_quantizers"] = self.config.decoder.num_codebooks
+        elif "num_codebooks" in encoder_signature:
+            encoder_kwargs["num_codebooks"] = self.config.decoder.num_codebooks
 
         encoder_kwargs[model_input_name] = input_values
         audio_encoder_outputs = encoder.encode(**encoder_kwargs)
