@@ -33,7 +33,7 @@ from transformers.cache_utils import (
     SlidingWindowCache,
     StaticCache,
 )
-from transformers.generation.configuration_utils import GenerationConfig
+from transformers.generation.configuration_utils import GenerationConfig, GenerationMode
 from transformers.generation.logits_process import LogitsProcessorList
 from transformers.generation.stopping_criteria import StoppingCriteriaList
 from transformers.modeling_attn_mask_utils import (
@@ -60,8 +60,15 @@ from transformers.utils.import_utils import is_flash_attn_2_available, is_flash_
 from .configuration_parler_tts import ParlerTTSConfig, ParlerTTSDecoderConfig
 from .dac_wrapper import DACConfig, DACModel
 
+from importlib.metadata import version
+from packaging.version import Version
 
-AutoConfig.register("dac", DACConfig)
+is_dac_integrated_to_transformers = Version(version("transformers")) > Version("4.44.2dev")
+if not is_dac_integrated_to_transformers:
+    AutoConfig.register("dac", DACConfig)
+else:
+    AutoConfig.register("dac_on_the_hub", DACConfig)
+
 AutoModel.register(DACConfig, DACModel)
 
 if TYPE_CHECKING:
@@ -2014,75 +2021,42 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
         logits_processor = logits_processor if logits_processor is not None else LogitsProcessorList()
         stopping_criteria = stopping_criteria if stopping_criteria is not None else StoppingCriteriaList()
 
-        if generation_config.pad_token_id is None and generation_config.eos_token_id is not None:
-            if model_kwargs.get("attention_mask", None) is None:
-                logger.warning(
-                    "The attention mask and the pad token id were not set. As a consequence, you may observe "
-                    "unexpected behavior. Please pass your input's `attention_mask` to obtain reliable results."
-                )
-            eos_token_id = generation_config.eos_token_id
-            if isinstance(eos_token_id, list):
-                eos_token_id = eos_token_id[0]
-            logger.warning(f"Setting `pad_token_id` to `eos_token_id`:{eos_token_id} for open-end generation.")
-            generation_config.pad_token_id = eos_token_id
+        requires_attention_mask = "encoder_outputs" not in model_kwargs
+        kwargs_has_attention_mask = model_kwargs.get("attention_mask", None) is not None
 
-        # 3. Define model inputs
-        # inputs_tensor has to be defined
-        # model_input_name is defined if model-specific keyword input is passed
-        # otherwise model_input_name is None
-        # all model-specific keyword inputs are removed from `model_kwargs`
+        # 3. Define model inputs`
         input_ids, model_input_name, model_kwargs = self._prepare_model_inputs(
             inputs, generation_config.bos_token_id, model_kwargs
         )
         batch_size = input_ids.shape[0] // self.num_codebooks
-        kwargs_has_attention_mask = model_kwargs.get("attention_mask", None) is not None
         self._prepare_special_tokens(generation_config, kwargs_has_attention_mask, device=input_ids.device)
 
         # 4. Define other model kwargs
         model_kwargs["use_cache"] = generation_config.use_cache
 
-        requires_attention_mask = "encoder_outputs" not in model_kwargs
         if model_kwargs.get("attention_mask", None) is None and requires_attention_mask:
-            model_kwargs["attention_mask"] = self._prepare_attention_mask_for_generation(
+            self._prepare_attention_mask_for_generation(
                 input_ids, generation_config.pad_token_id, generation_config.eos_token_id
             )
 
         # 5. Prepare `max_length` depending on other stopping criteria.
-        input_ids_seq_length = input_ids.shape[-1]
+        input_ids_length = input_ids.shape[-1]
         has_default_max_length = kwargs.get("max_length") is None and generation_config.max_length is not None
-        if has_default_max_length and generation_config.max_new_tokens is None and generation_config.max_length == 20:
-            logger.warning(
-                f"Using the model-agnostic default `max_length` (={generation_config.max_length}) "
-                "to control the generation length.  recommend setting `max_new_tokens` to control the maximum length of the generation."
-            )
-        elif generation_config.max_new_tokens is not None:
-            if not has_default_max_length:
-                logger.warning(
-                    f"Both `max_new_tokens` (={generation_config.max_new_tokens}) and `max_length`(="
-                    f"{generation_config.max_length}) seem to have been set. `max_new_tokens` will take precedence. "
-                    "Please refer to the documentation for more information. "
-                    "(https://huggingface.co/docs/transformers/main/en/main_classes/text_generation)"
-                )
-            generation_config.max_length = generation_config.max_new_tokens + input_ids_seq_length
-
-        if generation_config.min_length is not None and generation_config.min_length > generation_config.max_length:
-            raise ValueError(
-                f"Unfeasible length constraints: the minimum length ({generation_config.min_length}) is larger than"
-                f" the maximum length ({generation_config.max_length})"
-            )
-        if input_ids_seq_length >= generation_config.max_length:
-            logger.warning(
-                f"Input length of decoder_input_ids is {input_ids_seq_length}, but `max_length` is set to"
-                f" {generation_config.max_length}. This can lead to unexpected behavior. You should consider"
-                " increasing `max_new_tokens`."
-            )
+        has_default_min_length = kwargs.get("min_length") is None and generation_config.min_length is not None
+        generation_config = self._prepare_generated_length(
+            generation_config=generation_config,
+            has_default_max_length=has_default_max_length,
+            has_default_min_length=has_default_min_length,
+            model_input_name=model_input_name,
+            inputs_tensor=input_ids,
+            input_ids_length=input_ids_length,
+        )
 
         # 6. Prepare `input_ids` which will be used for auto-regressive generation
         # Build the delay pattern mask for offsetting each codebook prediction by 1 (this behaviour is specific to Parler-TTS)
         input_ids, delay_pattern_mask = self.build_delay_pattern_mask(
             input_ids,
-            bos_token_id=generation_config.bos_token_id,
-            pad_token_id=generation_config.pad_token_id,
+            pad_token_id=generation_config._decoder_start_token_tensor,
             max_length=generation_config.max_length,
         )
 
@@ -2107,7 +2081,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
         # 8. prepare distribution pre_processing samplers
         logits_processor = self._get_logits_processor(
             generation_config=generation_config,
-            input_ids_seq_length=input_ids_seq_length,
+            input_ids_seq_length=input_ids_length,
             encoder_input_ids=input_ids,
             prefix_allowed_tokens_fn=None,
             logits_processor=logits_processor,
@@ -2182,7 +2156,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
             max_length=output_ids.shape[1],
         )
 
-        mask = (mask != generation_config.bos_token_id) & (mask != generation_config.pad_token_id)
+        mask = (mask != generation_config._bos_token_tensor) & (mask != generation_config._pad_token_tensor)
         output_ids = output_ids[mask].reshape(batch_size, self.num_codebooks, -1)
 
         if generation_config.return_dict_in_generate:
@@ -2304,6 +2278,14 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 "following discussion on GitHub: https://github.com/huggingface/transformers/issues/23350"
             )
 
+        audio_encoder_signature = set(inspect.signature(self.audio_encoder.decode).parameters.keys())
+        self.use_audio_scales = "audio_scales" in audio_encoder_signature
+
+        self.use_4dim_audio_codes = False
+        audio_type = audio_encoder.config.model_type
+        if audio_type in {"encodec", "dac_on_the_hub"} or (audio_type == "dac" and not is_dac_integrated_to_transformers):
+            self.use_4dim_audio_codes = True 
+ 
         # Initialize projection and embedding layers and tie text encoder and decoder weights if set accordingly
         self.post_init()
 
@@ -3044,20 +3026,26 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         encoder_kwargs[model_input_name] = input_values
         audio_encoder_outputs = encoder.encode(**encoder_kwargs)
         audio_codes = audio_encoder_outputs.audio_codes
-        audio_scales = audio_encoder_outputs.audio_scales
+        audio_scales = audio_encoder_outputs.get("audio_scales")
 
-        frames, bsz, codebooks, seq_len = audio_codes.shape
+        if audio_codes.ndim == 3:
+            bsz, codebooks, seq_len = audio_codes.shape
+            decoder_input_ids = audio_codes.reshape(bsz * self.decoder.num_codebooks, seq_len)
+        else:
+            frames, bsz, codebooks, seq_len = audio_codes.shape
 
-        if frames != 1:
-            raise ValueError(
-                f"Expected 1 frame in the audio code outputs, got {frames} frames. Ensure chunking is "
-                "disabled by setting `chunk_length=None` in the audio encoder."
-            )
+            if frames != 1:
+                raise ValueError(
+                    f"Expected 1 frame in the audio code outputs, got {frames} frames. Ensure chunking is "
+                    "disabled by setting `chunk_length=None` in the audio encoder."
+                )
 
-        decoder_input_ids = audio_codes[0, ...].reshape(bsz * self.decoder.num_codebooks, seq_len)
+            decoder_input_ids = audio_codes[0, ...].reshape(bsz * self.decoder.num_codebooks, seq_len)
 
         model_kwargs["decoder_input_ids"] = decoder_input_ids
-        model_kwargs["audio_scales"] = audio_scales
+        if audio_scales is not None:
+            model_kwargs["audio_scales"] = audio_scales
+
         return model_kwargs
 
     def prepare_decoder_input_ids_from_labels(self, labels: torch.Tensor):
@@ -3387,7 +3375,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 )
 
         # build the delay pattern mask for offsetting each codebook prediction by 1 (this behaviour is specific to Parler-TTS)
-        input_ids, decoder_delay_pattern_mask = self.decoder.build_delay_pattern_mask(
+        _, decoder_delay_pattern_mask = self.decoder.build_delay_pattern_mask(
             input_ids,
             bos_token_id=generation_config._bos_token_tensor,
             pad_token_id=generation_config._pad_token_tensor,
@@ -3401,16 +3389,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             streamer.put(input_ids.cpu())
 
         # 7. determine generation mode
-        is_greedy_gen_mode = (
-            (generation_config.num_beams == 1)
-            and (generation_config.num_beam_groups == 1)
-            and generation_config.do_sample is False
-        )
-        is_sample_gen_mode = (
-            (generation_config.num_beams == 1)
-            and (generation_config.num_beam_groups == 1)
-            and generation_config.do_sample is True
-        )
+        generation_mode = generation_config.get_generation_mode()
 
         # 8. prepare distribution pre_processing samplers
         logits_processor = self._get_logits_processor(
@@ -3427,28 +3406,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             generation_config=generation_config, stopping_criteria=stopping_criteria
         )
 
-        if is_greedy_gen_mode:
-            if generation_config.num_return_sequences > 1:
-                raise ValueError(
-                    "num_return_sequences has to be 1 when doing greedy search, "
-                    f"but is {generation_config.num_return_sequences}."
-                )
-
-            # 10. run greedy search
-            outputs = self._sample(
-                input_ids,
-                logits_processor=logits_processor,
-                stopping_criteria=stopping_criteria,
-                generation_config=generation_config,
-                synced_gpus=synced_gpus,
-                streamer=streamer,
-                **model_kwargs,
-            )
-
-        elif is_sample_gen_mode:
-            # 10. prepare logits warper
-            logits_warper = self._get_logits_warper(generation_config, device=input_ids.device)
-
+        if generation_mode in (GenerationMode.SAMPLE, GenerationMode.GREEDY_SEARCH):
             # expand input_ids with `num_return_sequences` additional sequences per batch
             input_ids, model_kwargs = self._expand_inputs_for_generation(
                 input_ids=input_ids,
@@ -3457,11 +3415,10 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 **model_kwargs,
             )
 
-            # 11. run sample
+            # 10. run sample
             outputs = self._sample(
                 input_ids,
                 logits_processor=logits_processor,
-                logits_warper=logits_warper,
                 stopping_criteria=stopping_criteria,
                 generation_config=generation_config,
                 synced_gpus=synced_gpus,
@@ -3497,10 +3454,18 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         # append the frame dimension back to the audio codes
         output_ids = output_ids[None, ...]
 
-        audio_scales = model_kwargs.get("audio_scales")
-        if audio_scales is None:
-            audio_scales = [None] * batch_size
+        audio_decode_kwargs = {}
+        if self.use_audio_scales:
+            audio_scales = model_kwargs.get("audio_scales")
+            if audio_scales is None:
+                audio_scales = [None] * batch_size
+            audio_decode_kwargs["audio_scales"] = audio_scales
 
+        
+        if not self.use_4dim_audio_codes:
+            # remove chunk dim
+            output_ids = output_ids.squeeze(0)
+            
         decode_sequentially = (
             generation_config.bos_token_id in output_ids
             or generation_config.pad_token_id in output_ids
@@ -3508,18 +3473,23 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         )
         if not decode_sequentially:
             output_values = self.audio_encoder.decode(
-                output_ids,
-                audio_scales=audio_scales,
+                audio_codes=output_ids,
+                **audio_decode_kwargs,
             ).audio_values.squeeze(1)
             output_lengths = [audio.shape[0] for audio in output_values]
         else:
             output_values = []
             for sample_id in range(batch_size):
-                sample = output_ids[:, sample_id]
-                sample_mask = (sample >= self.audio_encoder.config.codebook_size).sum(dim=(0, 1)) == 0
+                sample = output_ids[:, sample_id] if self.use_4dim_audio_codes else output_ids[sample_id]
+                sample_mask = (sample >= self.audio_encoder.config.codebook_size)
+                sample_mask = (sample_mask.sum(dim=(0, 1)) == 0) if self.use_4dim_audio_codes else (sample_mask.sum(dim=0) == 0)
+                single_audio_decode_kwargs = {}
+                if self.use_audio_scales:
+                    single_audio_decode_kwargs["audio_scales"] = [audio_decode_kwargs["audio_scales"][sample_id]]
                 if sample_mask.sum() > 0:
-                    sample = sample[:, :, sample_mask]
-                    sample = self.audio_encoder.decode(sample[None, ...], [audio_scales[sample_id]]).audio_values
+                    sample = sample[:, :, sample_mask] if self.use_4dim_audio_codes else sample[:, sample_mask]
+                    sample = self.audio_encoder.decode(audio_codes=sample[None, ...], **single_audio_decode_kwargs).audio_values
+                    sample = sample if self.use_4dim_audio_codes else sample.unsqueeze(0)
                     output_values.append(sample.transpose(0, 2))
                 else:
                     output_values.append(torch.zeros((1, 1, 1)).to(self.device))

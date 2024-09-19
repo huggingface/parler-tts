@@ -17,6 +17,10 @@
 from transformers import AutoConfig, logging
 from transformers.configuration_utils import PretrainedConfig
 
+from importlib.metadata import version
+from packaging.version import Version
+
+use_dac_on_the_hub = Version(version("transformers")) > Version("4.44.2dev")
 
 logger = logging.get_logger(__name__)
 
@@ -233,6 +237,11 @@ class ParlerTTSConfig(PretrainedConfig):
 
         audio_encoder_config = kwargs.pop("audio_encoder")
         audio_encoder_model_type = audio_encoder_config.pop("model_type")
+
+        model_version = kwargs.get("transformers_version", None)
+        if model_version is not None and Version(model_version) <= Version("4.44.2dev") and use_dac_on_the_hub and audio_encoder_model_type=="dac":
+            # here we have to manually change model type if DAC based on transformers version
+            audio_encoder_model_type = "dac_on_the_hub"
 
         decoder_config = kwargs.pop("decoder")
 
