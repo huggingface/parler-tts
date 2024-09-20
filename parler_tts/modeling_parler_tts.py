@@ -3494,7 +3494,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 if sample_mask.sum() > 0:
                     sample = sample[:, :, sample_mask] if self.use_4dim_audio_codes else sample[:, sample_mask]
                     sample = self.audio_encoder.decode(audio_codes=sample[None, ...], **single_audio_decode_kwargs).audio_values
-                    sample = sample if self.use_4dim_audio_codes else sample.unsqueeze(0)
+                    sample = sample if sample.ndim == 3 else sample.unsqueeze(0)
                     output_values.append(sample.transpose(0, 2))
                 else:
                     output_values.append(torch.zeros((1, 1, 1)).to(self.device))
