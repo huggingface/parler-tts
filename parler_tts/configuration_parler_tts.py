@@ -20,8 +20,8 @@ from transformers.configuration_utils import PretrainedConfig
 
 logger = logging.get_logger(__name__)
 
-MUSICGEN_PRETRAINED_CONFIG_ARCHIVE_MAP = {
-    "facebook/parler_tts-small": "https://huggingface.co/facebook/parler_tts-small/resolve/main/config.json",
+PARLER_TTS_PRETRAINED_CONFIG_ARCHIVE_MAP = {
+    "parler-tts/parler-tts-mini-v1": "https://huggingface.co/parler-tts/parler-tts-mini-v1/resolve/main/config.json",
     # See all ParlerTTS models at https://huggingface.co/models?filter=parler_tts
 }
 
@@ -31,7 +31,7 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
     This is the configuration class to store the configuration of an [`ParlerTTSDecoder`]. It is used to instantiate a
     Parler-TTS decoder according to the specified arguments, defining the model architecture. Instantiating a
     configuration with the defaults will yield a similar configuration to that of the Parler-TTS
-    [facebook/parler_tts-small](https://huggingface.co/facebook/parler_tts-small) architecture.
+    [parler-tts/parler-tts-mini-v1](https://huggingface.co/parler-tts/parler-tts-mini-v1) architecture.
 
     Configuration objects inherit from [`PretrainedConfig`] and can be used to control the model outputs. Read the
     documentation from [`PretrainedConfig`] for more information.
@@ -203,7 +203,7 @@ class ParlerTTSConfig(PretrainedConfig):
     ...     text_encoder_config, audio_encoder_config, decoder_config
     ... )
 
-    >>> # Initializing a ParlerTTSForConditionalGeneration (with random weights) from the facebook/parler_tts-small style configuration
+    >>> # Initializing a ParlerTTSForConditionalGeneration (with random weights) from the parler-tts/parler-tts-mini-v1 style configuration
     >>> model = ParlerTTSForConditionalGeneration(configuration)
 
     >>> # Accessing the model configuration

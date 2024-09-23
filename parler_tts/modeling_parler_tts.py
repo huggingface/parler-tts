@@ -77,10 +77,10 @@ else:
     logger.warn("Flash attention 2 is not installed")
 
 _CONFIG_FOR_DOC = "ParlerTTSConfig"
-_CHECKPOINT_FOR_DOC = "facebook/parler_tts-small"
+_CHECKPOINT_FOR_DOC = "parler-tts/parler-tts-mini-v1"
 
 MUSICGEN_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "facebook/parler_tts-small",
+    "parler-tts/parler-tts-mini-v1",
     # See all ParlerTTS models at https://huggingface.co/models?filter=parler_tts
 ]
 
@@ -2357,7 +2357,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         ```python
         >>> from parler_tts import ParlerTTSForConditionalGeneration
 
-        >>> model = ParlerTTSForConditionalGeneration.from_pretrained("facebook/parler_tts-small")
+        >>> model = ParlerTTSForConditionalGeneration.from_pretrained("parler-tts/parler-tts-mini-v1")
         ```"""
 
         # At the moment fast initialization is not supported for composite models
@@ -2411,7 +2411,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
 
                     - A string, the *model id* of a pretrained model hosted inside a model repo on huggingface.co.
                       Valid model ids can be located at the root-level, like `gpt2`, or namespaced under a user or
-                      organization name, like `facebook/parler_tts-small`.
+                      organization name, like `parler-tts/parler-tts-mini-v1`.
                     - A path to a *directory* containing model weights saved using
                       [`~PreTrainedModel.save_pretrained`], e.g., `./my_model_directory/`.
 
@@ -2440,7 +2440,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         >>> model = ParlerTTSForConditionalGeneration.from_sub_models_pretrained(
         ...     text_encoder_pretrained_model_name_or_path="t5-base",
         ...     audio_encoder_pretrained_model_name_or_path="facebook/encodec_24khz",
-        ...     decoder_pretrained_model_name_or_path="facebook/parler_tts-small",
+        ...     decoder_pretrained_model_name_or_path="parler-tts/parler-tts-mini-v1",
         ... )
         >>> # saving model after fine-tuning
         >>> model.save_pretrained("./parler_tts-ft")
@@ -2607,8 +2607,8 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         >>> from transformers import AutoProcessor, ParlerTTSForConditionalGeneration
         >>> import torch
 
-        >>> processor = AutoProcessor.from_pretrained("facebook/parler_tts-small")
-        >>> model = ParlerTTSForConditionalGeneration.from_pretrained("facebook/parler_tts-small")
+        >>> processor = AutoProcessor.from_pretrained("parler-tts/parler-tts-mini-v1")
+        >>> model = ParlerTTSForConditionalGeneration.from_pretrained("parler-tts/parler-tts-mini-v1")
 
         >>> inputs = processor(
         ...     text=["80s pop track with bassy drums and synth", "90s rock song with loud guitars and heavy drums"],
