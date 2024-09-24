@@ -12,6 +12,9 @@ from .configuration_dac import DACConfig
 class DACModel(PreTrainedModel):
     config_class = DACConfig
 
+    # Set main input to 'input_values' for voice steering
+    main_input_name = "input_values"
+
     def __init__(self, config):
         super().__init__(config)
 
