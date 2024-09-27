@@ -3487,7 +3487,6 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             # Handle input_values for voice steering
             ##mask = (output_ids != generation_config.bos_token_id) & (output_ids != generation_config.pad_token_id)
             mask = output_ids
-            print("#CMM# GUPPY!!!")
         else:
             # Revert the pattern delay mask by filtering the eos and bos token ids from the delay pattern mask
             _, mask = self.decoder.build_delay_pattern_mask(
