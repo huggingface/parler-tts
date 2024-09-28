@@ -205,7 +205,7 @@ scipy.io.wavfile.write("sample_out_2.wav", rate=feature_extractor.sampling_rate,
 ## Speaker Consistency
 
 The checkpoint was trained on 34 speakers. The full list of available speakers includes:
-Laura, Gary, Jon, Lea, Karen, Rick, Brenda, David, Eileen, Jordan, Mike, Yann, Joy, James, Eric, Lauren, Rose, Will, Jason, Aaron, Naomie, Alisa, Patrick, Jerry, Tina, Jenna, Bill, Tom, Carol, Barbara, Rebecca, Anna, Bruce, Emily
+Laura, Gary, Jon, Lea, Karen, Rick, Brenda, David, Eileen, Jordan, Mike, Yann, Joy, James, Eric, Lauren, Rose, Will, Jason, Aaron, Naomie, Alisa, Patrick, Jerry, Tina, Jenna, Bill, Tom, Carol, Barbara, Rebecca, Anna, Bruce, and Emily.
 
 However, the models performed better with certain speakers. Below are the top 20 speakers for each model variant, ranked by their average speaker similarity scores:
 
@@ -261,4 +261,4 @@ However, the models performed better with certain speakers. Below are the top 20
 
 The numbers represent the average speaker similarity between a random snippet of the person speaking and a randomly Parler-generated snippet. Higher scores indicate better model performance in maintaining voice consistency.
 
-These scores are derived from [dataset for Mini(https://huggingface.co/datasets/ylacombe/parler-tts-mini-v1_speaker_similarity)] and [dataset for Large(https://huggingface.co/datasets/ylacombe/parler-large-v1-og_speaker_similarity)].
+These scores are derived from [dataset for Mini](https://huggingface.co/datasets/ylacombe/parler-tts-mini-v1_speaker_similarity) and [dataset for Large](https://huggingface.co/datasets/ylacombe/parler-large-v1-og_speaker_similarity).
