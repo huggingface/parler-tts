@@ -427,7 +427,10 @@ def main():
             len_audio = batch.pop("len_audio")
             audio_decoder.to(batch["input_values"].device).eval()
             with torch.no_grad():
-                labels = audio_decoder.encode(**batch, bandwidth=bandwidth)["audio_codes"]
+                if bandwidth is None:
+                    labels = audio_decoder.encode(**batch, num_quantizers=num_codebooks)["audio_codes"]
+                else:
+                    labels = audio_decoder.encode(**batch, bandwidth=bandwidth)["audio_codes"]
             output = {}
             output["len_audio"] = len_audio
             # (1, bsz, codebooks, seq_len) -> (bsz, seq_len, codebooks)
