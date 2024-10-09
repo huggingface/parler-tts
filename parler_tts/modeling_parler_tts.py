@@ -1720,7 +1720,14 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
         self.model = ParlerTTSModel(config)
 
         self.num_codebooks = config.num_codebooks
-        self.lm_heads = nn.ModuleList(
+        self.vocab_size = config.vocab_size
+        self.num_codebooks = config.num_codebooks
+        
+        self.use_fused_lm_heads = config.use_fused_lm_heads
+        if self.use_fused_lm_heads:
+            self.lm_heads = nn.Linear(config.hidden_size, config.vocab_size * config.num_codebooks, bias=False)
+        else:
+            self.lm_heads = nn.ModuleList(
             [nn.Linear(config.hidden_size, config.vocab_size, bias=False) for _ in range(config.num_codebooks)]
         )
 
@@ -1798,7 +1805,10 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
 
         hidden_states = outputs[0]
 
-        lm_logits = torch.stack([head(hidden_states) for head in self.lm_heads], dim=1)
+        if self.use_fused_lm_heads:
+            lm_logits = self.lm_heads(hidden_states).view(hidden_states.shape[0], -1, self.num_codebooks, self.vocab_size).transpose(1,2)
+        else:
+            lm_logits = torch.stack([head(hidden_states) for head in self.lm_heads], dim=1)
 
         loss = None
         if labels is not None:
@@ -3470,6 +3480,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         if not self.use_4dim_audio_codes:
             # remove chunk dim
             output_ids = output_ids.squeeze(0)
+            
             
         decode_sequentially = (
             generation_config.bos_token_id in output_ids

@@ -95,6 +95,8 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
             The base period of the RoPE embeddings.
         cross_attention_implementation_strategy (`str`, *optional*):
             If not specified, the cross-attention implementation will be the same as `_attn_implementation`. If `always_eager`, it will always be the eager implementation. If `always_sdpa`, it will always be the sdpa implementation.
+        use_fused_lm_heads(`bool`, *optional*, defaults to `False`):
+            Whether to fuse audio LM heads instead of applying them sequentially.
     """
 
     model_type = "parler_tts_decoder"
@@ -126,6 +128,7 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
         rope_embeddings=False,
         rope_theta=10_000.0,
         cross_attention_implementation_strategy=None,
+        use_fused_lm_heads=False,
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -152,6 +155,7 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
         self.rope_embeddings = rope_embeddings
         self.rope_theta = rope_theta
         self.cross_attention_implementation_strategy = cross_attention_implementation_strategy
+        self.use_fused_lm_heads = use_fused_lm_heads
 
         super().__init__(
             pad_token_id=pad_token_id,
