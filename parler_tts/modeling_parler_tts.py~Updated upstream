@@ -33,7 +33,7 @@ from transformers.cache_utils import (
     SlidingWindowCache,
     StaticCache,
 )
-from transformers.generation.configuration_utils import GenerationConfig
+from transformers.generation.configuration_utils import GenerationConfig, GenerationMode
 from transformers.generation.logits_process import LogitsProcessorList
 from transformers.generation.stopping_criteria import StoppingCriteriaList
 from transformers.modeling_attn_mask_utils import (
@@ -54,15 +54,30 @@ from transformers.utils import (
     add_start_docstrings_to_model_forward,
     logging,
     replace_return_docstrings,
+    is_flash_attn_2_available,
+    is_flash_attn_greater_or_equal_2_10,
 )
 from transformers.utils.import_utils import is_flash_attn_2_available, is_flash_attn_greater_or_equal_2_10
 
 from .configuration_parler_tts import ParlerTTSConfig, ParlerTTSDecoderConfig
 from .dac_wrapper import DACConfig, DACModel
 
+from importlib.metadata import version
+from packaging.version import Version
 
-AutoConfig.register("dac", DACConfig)
+is_dac_integrated_to_transformers = Version(version("transformers")) > Version("4.44.2dev")
+if not is_dac_integrated_to_transformers:
+    AutoConfig.register("dac", DACConfig)
+else:
+    AutoConfig.register("dac_on_the_hub", DACConfig)
+
+<<<<<<< Updated upstream:parler_tts/modeling_parler_tts.py
 AutoModel.register(DACConfig, DACModel)
+=======
+if is_flash_attn_2_available():
+    from flash_attn import flash_attn_func, flash_attn_varlen_func
+    from flash_attn.bert_padding import index_first_axis, pad_input, unpad_input  # noqa
+>>>>>>> Stashed changes:stable_speech/modeling_stable_speech.py
 
 if TYPE_CHECKING:
     from transformers.generation.streamers import BaseStreamer
@@ -84,9 +99,23 @@ MUSICGEN_PRETRAINED_MODEL_ARCHIVE_LIST = [
     # See all ParlerTTS models at https://huggingface.co/models?filter=parler_tts
 ]
 
+<<<<<<< Updated upstream:parler_tts/modeling_parler_tts.py
 
 NEED_SETUP_CACHE_CLASSES_MAPPING = {"static": StaticCache, "sliding_window": SlidingWindowCache}
 
+=======
+# Copied from transformers.models.llama.modeling_llama._get_unpad_data
+def _get_unpad_data(attention_mask):
+    seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
+    indices = torch.nonzero(attention_mask.flatten(), as_tuple=False).flatten()
+    max_seqlen_in_batch = seqlens_in_batch.max().item()
+    cu_seqlens = F.pad(torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.torch.int32), (1, 0))
+    return (
+        indices,
+        cu_seqlens,
+        max_seqlen_in_batch,
+    )
+>>>>>>> Stashed changes:stable_speech/modeling_stable_speech.py
 
 def apply_delay_pattern_mask(input_ids, decoder_pad_token_mask):
     """Apply a delay pattern mask to the decoder input ids, only preserving predictions where
@@ -813,7 +842,236 @@ class ParlerTTSSdpaAttention(ParlerTTSAttention):
 
         attn_output = self.out_proj(attn_output)
 
+<<<<<<< Updated upstream:parler_tts/modeling_parler_tts.py
         return attn_output, None, past_key_value
+=======
+        return attn_output, attn_weights_reshaped, past_key_value
+    
+
+# Copied from transformers.models.bart.modeling_bart.BartFlashAttention2 with Bart->StableSpeech
+class StableSpeechFlashAttention2(StableSpeechAttention):
+    """
+    StableSpeech flash attention module. This module inherits from `StableSpeechAttention` as the weights of the module stays
+    untouched. The only required change would be on the forward pass where it needs to correctly call the public API of
+    flash attention and deal with padding tokens in case the input contains any of them.
+    """
+
+    # Copied from transformers.models.llama.modeling_llama.LlamaFlashAttention2.__init__
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # TODO: Should be removed once Flash Attention for RoCm is bumped to 2.1.
+        # flash_attn<2.1 generates top-left aligned causal mask, while what is needed here is bottom-right alignement, that was made default for flash_attn>=2.1. This attribute is used to handle this difference. Reference: https://github.com/Dao-AILab/flash-attention/releases/tag/v2.1.0.
+        # Beware that with flash_attn<2.1, using q_seqlen != k_seqlen (except for the case q_seqlen == 1) produces a wrong mask (top-left).
+        self._flash_attn_uses_top_left_mask = not is_flash_attn_greater_or_equal_2_10()
+
+    def _reshape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
+        return tensor.view(bsz, seq_len, self.num_heads, self.head_dim)
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        key_value_states: Optional[torch.Tensor] = None,
+        past_key_value: Optional[Tuple[torch.Tensor]] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        layer_head_mask: Optional[torch.Tensor] = None,
+        output_attentions: bool = False,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+        # StableSpeechFlashAttention2 attention does not support output_attentions
+        if output_attentions:
+            raise ValueError("StableSpeechFlashAttention2 attention does not support output_attentions")
+
+        # if key_value_states are provided this layer is used as a cross-attention layer
+        # for the decoder
+        is_cross_attention = key_value_states is not None
+
+        bsz, q_len, _ = hidden_states.size()
+
+        # get query proj
+        query_states = self._reshape(self.q_proj(hidden_states), -1, bsz)
+        # get key, value proj
+        # `past_key_value[0].shape[2] == key_value_states.shape[1]`
+        # is checking that the `sequence_length` of the `past_key_value` is the same as
+        # the provided `key_value_states` to support prefix tuning
+        if (
+            is_cross_attention
+            and past_key_value is not None
+            and past_key_value[0].shape[2] == key_value_states.shape[1]
+        ):
+            # reuse k,v, cross_attentions
+            key_states = past_key_value[0].transpose(1, 2)
+            value_states = past_key_value[1].transpose(1, 2)
+        elif is_cross_attention:
+            # cross_attentions
+            key_states = self._reshape(self.k_proj(key_value_states), -1, bsz)
+            value_states = self._reshape(self.v_proj(key_value_states), -1, bsz)
+        elif past_key_value is not None:
+            # reuse k, v, self_attention
+            key_states = self._reshape(self.k_proj(hidden_states), -1, bsz)
+            value_states = self._reshape(self.v_proj(hidden_states), -1, bsz)
+            key_states = torch.cat([past_key_value[0].transpose(1, 2), key_states], dim=1)
+            value_states = torch.cat([past_key_value[1].transpose(1, 2), value_states], dim=1)
+        else:
+            # self_attention
+            key_states = self._reshape(self.k_proj(hidden_states), -1, bsz)
+            value_states = self._reshape(self.v_proj(hidden_states), -1, bsz)
+
+        if self.is_decoder:
+            # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
+            # Further calls to cross_attention layer can then reuse all cross-attention
+            # key/value_states (first "if" case)
+            # if uni-directional self-attention (decoder) save Tuple(torch.Tensor, torch.Tensor) of
+            # all previous decoder key/value_states. Further calls to uni-directional self-attention
+            # can concat previous decoder key/value_states to current projected key/value_states (third "elif" case)
+            # if encoder bi-directional self-attention `past_key_value` is always `None`
+            past_key_value = (key_states.transpose(1, 2), value_states.transpose(1, 2))
+
+        kv_seq_len = key_states.shape[-2]
+        if past_key_value is not None:
+            kv_seq_len += past_key_value[0].shape[-2]
+
+        # In PEFT, usually we cast the layer norms in float32 for training stability reasons
+        # therefore the input hidden states gets silently casted in float32. Hence, we need
+        # cast them back in the correct dtype just to be sure everything works as expected.
+        # This might slowdown training & inference so it is recommended to not cast the LayerNorms
+        # in fp32. (LlamaRMSNorm handles it correctly)
+
+        input_dtype = query_states.dtype
+        if input_dtype == torch.float32:
+            if torch.is_autocast_enabled():
+                target_dtype = torch.get_autocast_gpu_dtype()
+            # Handle the case where the model is quantized
+            elif hasattr(self.config, "_pre_quantization_dtype"):
+                target_dtype = self.config._pre_quantization_dtype
+            else:
+                target_dtype = self.q_proj.weight.dtype
+
+            logger.warning_once(
+                f"The input hidden states seems to be silently casted in float32, this might be related to"
+                f" the fact you have upcasted embedding or layer norm layers in float32. We will cast back the input in"
+                f" {target_dtype}."
+            )
+
+            query_states = query_states.to(target_dtype)
+            key_states = key_states.to(target_dtype)
+            value_states = value_states.to(target_dtype)
+
+        attn_output = self._flash_attention_forward(
+            query_states, key_states, value_states, attention_mask, q_len, dropout=self.dropout
+        )
+
+        attn_output = attn_output.reshape(bsz, q_len, -1)
+        attn_output = self.out_proj(attn_output)
+
+        if not output_attentions:
+            attn_weights = None
+
+        return attn_output, attn_weights, past_key_value
+
+    # Copied from transformers.models.llama.modeling_llama.LlamaFlashAttention2._flash_attention_forward
+    def _flash_attention_forward(
+        self, query_states, key_states, value_states, attention_mask, query_length, dropout=0.0, softmax_scale=None
+    ):
+        """
+        Calls the forward method of Flash Attention - if the input hidden states contain at least one padding token
+        first unpad the input, then computes the attention scores and pad the final attention scores.
+
+        Args:
+            query_states (`torch.Tensor`):
+                Input query states to be passed to Flash Attention API
+            key_states (`torch.Tensor`):
+                Input key states to be passed to Flash Attention API
+            value_states (`torch.Tensor`):
+                Input value states to be passed to Flash Attention API
+            attention_mask (`torch.Tensor`):
+                The padding mask - corresponds to a tensor of size `(batch_size, seq_len)` where 0 stands for the
+                position of padding tokens and 1 for the position of non-padding tokens.
+            dropout (`int`, *optional*):
+                Attention dropout
+            softmax_scale (`float`, *optional*):
+                The scaling of QK^T before applying softmax. Default to 1 / sqrt(head_dim)
+        """
+        if not self._flash_attn_uses_top_left_mask:
+            causal = self.is_causal
+        else:
+            # TODO: Remove the `query_length != 1` check once Flash Attention for RoCm is bumped to 2.1. For details, please see the comment in LlamaFlashAttention2 __init__.
+            causal = self.is_causal and query_length != 1
+
+        # Contains at least one padding token in the sequence
+        if attention_mask is not None:
+            batch_size = query_states.shape[0]
+            query_states, key_states, value_states, indices_q, cu_seq_lens, max_seq_lens = self._upad_input(
+                query_states, key_states, value_states, attention_mask, query_length
+            )
+
+            cu_seqlens_q, cu_seqlens_k = cu_seq_lens
+            max_seqlen_in_batch_q, max_seqlen_in_batch_k = max_seq_lens
+
+            attn_output_unpad = flash_attn_varlen_func(
+                query_states,
+                key_states,
+                value_states,
+                cu_seqlens_q=cu_seqlens_q,
+                cu_seqlens_k=cu_seqlens_k,
+                max_seqlen_q=max_seqlen_in_batch_q,
+                max_seqlen_k=max_seqlen_in_batch_k,
+                dropout_p=dropout,
+                softmax_scale=softmax_scale,
+                causal=causal,
+            )
+
+            attn_output = pad_input(attn_output_unpad, indices_q, batch_size, query_length)
+        else:
+            attn_output = flash_attn_func(
+                query_states, key_states, value_states, dropout, softmax_scale=softmax_scale, causal=causal
+            )
+
+        return attn_output
+
+    # Copied from transformers.models.llama.modeling_llama.LlamaFlashAttention2._upad_input
+    def _upad_input(self, query_layer, key_layer, value_layer, attention_mask, query_length):
+        indices_k, cu_seqlens_k, max_seqlen_in_batch_k = _get_unpad_data(attention_mask)
+        batch_size, kv_seq_len, num_key_value_heads, head_dim = key_layer.shape
+
+        key_layer = index_first_axis(
+            key_layer.reshape(batch_size * kv_seq_len, num_key_value_heads, head_dim), indices_k
+        )
+        value_layer = index_first_axis(
+            value_layer.reshape(batch_size * kv_seq_len, num_key_value_heads, head_dim), indices_k
+        )
+        if query_length == kv_seq_len:
+            query_layer = index_first_axis(
+                query_layer.reshape(batch_size * kv_seq_len, self.num_heads, head_dim), indices_k
+            )
+            cu_seqlens_q = cu_seqlens_k
+            max_seqlen_in_batch_q = max_seqlen_in_batch_k
+            indices_q = indices_k
+        elif query_length == 1:
+            max_seqlen_in_batch_q = 1
+            cu_seqlens_q = torch.arange(
+                batch_size + 1, dtype=torch.int32, device=query_layer.device
+            )  # There is a memcpy here, that is very bad.
+            indices_q = cu_seqlens_q[:-1]
+            query_layer = query_layer.squeeze(1)
+        else:
+            # The -q_len: slice assumes left padding.
+            attention_mask = attention_mask[:, -query_length:]
+            query_layer, indices_q, cu_seqlens_q, max_seqlen_in_batch_q = unpad_input(query_layer, attention_mask)
+
+        return (
+            query_layer,
+            key_layer,
+            value_layer,
+            indices_q,
+            (cu_seqlens_q, cu_seqlens_k),
+            (max_seqlen_in_batch_q, max_seqlen_in_batch_k),
+        )
+        
+STABLE_SPEECH_ATTENTION_CLASSES = {
+    "eager": StableSpeechAttention,
+    "flash_attention_2": StableSpeechFlashAttention2,
+}
+>>>>>>> Stashed changes:stable_speech/modeling_stable_speech.py
 
 
 PARLERTTS_ATTENTION_CLASSES = {
@@ -828,13 +1086,21 @@ class ParlerTTSDecoderLayer(nn.Module):
         super().__init__()
         self.embed_dim = config.hidden_size
 
+<<<<<<< Updated upstream:parler_tts/modeling_parler_tts.py
         self.self_attn = PARLERTTS_ATTENTION_CLASSES[config._attn_implementation](
+=======
+        self.self_attn = STABLE_SPEECH_ATTENTION_CLASSES[config._attn_implementation](
+>>>>>>> Stashed changes:stable_speech/modeling_stable_speech.py
             embed_dim=self.embed_dim,
             num_heads=config.num_attention_heads,
             num_key_value_heads=config.num_key_value_heads,
             dropout=config.attention_dropout,
             is_decoder=True,
+<<<<<<< Updated upstream:parler_tts/modeling_parler_tts.py
             is_causal=True,
+=======
+            # is_causal=True, # TODO: verify it works
+>>>>>>> Stashed changes:stable_speech/modeling_stable_speech.py
             bias=False,
             rope_embeddings=config.rope_embeddings,
             layer_idx=layer_idx,
@@ -845,12 +1111,16 @@ class ParlerTTSDecoderLayer(nn.Module):
         self.activation_dropout = config.activation_dropout
 
         self.self_attn_layer_norm = nn.LayerNorm(self.embed_dim)
+<<<<<<< Updated upstream:parler_tts/modeling_parler_tts.py
         cross_attn_implementation = config._attn_implementation
         if config.cross_attention_implementation_strategy == "always_eager":
             cross_attn_implementation = "eager"
         elif config.cross_attention_implementation_strategy == "always_sdpa":
             cross_attn_implementation = "sdpa"
         self.encoder_attn = PARLERTTS_ATTENTION_CLASSES[cross_attn_implementation](
+=======
+        self.encoder_attn = STABLE_SPEECH_ATTENTION_CLASSES[config._attn_implementation](
+>>>>>>> Stashed changes:stable_speech/modeling_stable_speech.py
             self.embed_dim,
             config.num_attention_heads,
             num_key_value_heads=config.num_cross_attention_key_value_heads,
@@ -970,11 +1240,16 @@ class ParlerTTSPreTrainedModel(PreTrainedModel):
     config_class = ParlerTTSDecoderConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
+<<<<<<< Updated upstream:parler_tts/modeling_parler_tts.py
     _supports_flash_attn_2 = True
     _supports_sdpa = True
     _no_split_modules = ["ParlerTTSDecoderLayer", "ParlerTTSAttention"]
     _supports_cache_class = True
     _supports_static_cache = True
+=======
+    _no_split_modules = ["StableSpeechDecoderLayer", "StableSpeechAttention"]
+    _supports_flash_attn_2 = True
+>>>>>>> Stashed changes:stable_speech/modeling_stable_speech.py
 
     def _init_weights(self, module):
         std = self.config.initializer_factor
@@ -1257,6 +1532,7 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
             [ParlerTTSDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
         self.layer_norm = nn.LayerNorm(config.hidden_size)
+<<<<<<< Updated upstream:parler_tts/modeling_parler_tts.py
         self.attn_implementation = config._attn_implementation
         encoder_attn_implementation = config._attn_implementation
         if config.cross_attention_implementation_strategy is not None:
@@ -1264,6 +1540,10 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                 "sdpa" if config.cross_attention_implementation_strategy == "always_sdpa" else "eager"
             )
         self.encoder_attn_implementation = encoder_attn_implementation
+=======
+        self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"
+
+>>>>>>> Stashed changes:stable_speech/modeling_stable_speech.py
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
         self.post_init()
@@ -1337,6 +1617,7 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                     "You should pass an instance of `EncoderDecoderCache` instead, e.g. "
                     "`past_key_values=EncoderDecoderCache.from_legacy_cache(past_key_values)`."
                 )
+<<<<<<< Updated upstream:parler_tts/modeling_parler_tts.py
                 past_key_values = EncoderDecoderCache.from_legacy_cache(past_key_values)
 
         past_key_values_length = 0
@@ -1384,6 +1665,28 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                         ),
                     ],
                     dim=1,
+=======
+                attention_mask = torch.cat([prompt_attention_mask, torch.ones(input_shape, device=self.device, dtype=prompt_attention_mask.dtype)], dim=1)
+                
+        input_shape = inputs_embeds.size()[:-1]
+        
+        if self._use_flash_attention_2:
+            attention_mask = attention_mask if (attention_mask is not None and 0 in attention_mask) else None
+        else:
+            attention_mask = _prepare_4d_causal_attention_mask(
+                attention_mask, input_shape, inputs_embeds, past_key_values_length
+            )
+
+
+        # expand encoder attention mask
+        if encoder_hidden_states is not None and encoder_attention_mask is not None:
+            if self._use_flash_attention_2:
+                encoder_attention_mask = encoder_attention_mask if 0 in encoder_attention_mask else None
+            else:
+                # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
+                encoder_attention_mask = _prepare_4d_attention_mask(
+                    encoder_attention_mask, inputs_embeds.dtype, tgt_len=input_shape[-1]
+>>>>>>> Stashed changes:stable_speech/modeling_stable_speech.py
                 )
 
         input_shape = inputs_embeds.size()[:-1]
@@ -2014,75 +2317,42 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
         logits_processor = logits_processor if logits_processor is not None else LogitsProcessorList()
         stopping_criteria = stopping_criteria if stopping_criteria is not None else StoppingCriteriaList()
 
-        if generation_config.pad_token_id is None and generation_config.eos_token_id is not None:
-            if model_kwargs.get("attention_mask", None) is None:
-                logger.warning(
-                    "The attention mask and the pad token id were not set. As a consequence, you may observe "
-                    "unexpected behavior. Please pass your input's `attention_mask` to obtain reliable results."
-                )
-            eos_token_id = generation_config.eos_token_id
-            if isinstance(eos_token_id, list):
-                eos_token_id = eos_token_id[0]
-            logger.warning(f"Setting `pad_token_id` to `eos_token_id`:{eos_token_id} for open-end generation.")
-            generation_config.pad_token_id = eos_token_id
+        requires_attention_mask = "encoder_outputs" not in model_kwargs
+        kwargs_has_attention_mask = model_kwargs.get("attention_mask", None) is not None
 
-        # 3. Define model inputs
-        # inputs_tensor has to be defined
-        # model_input_name is defined if model-specific keyword input is passed
-        # otherwise model_input_name is None
-        # all model-specific keyword inputs are removed from `model_kwargs`
+        # 3. Define model inputs`
         input_ids, model_input_name, model_kwargs = self._prepare_model_inputs(
             inputs, generation_config.bos_token_id, model_kwargs
         )
         batch_size = input_ids.shape[0] // self.num_codebooks
-        kwargs_has_attention_mask = model_kwargs.get("attention_mask", None) is not None
         self._prepare_special_tokens(generation_config, kwargs_has_attention_mask, device=input_ids.device)
 
         # 4. Define other model kwargs
         model_kwargs["use_cache"] = generation_config.use_cache
 
-        requires_attention_mask = "encoder_outputs" not in model_kwargs
         if model_kwargs.get("attention_mask", None) is None and requires_attention_mask:
-            model_kwargs["attention_mask"] = self._prepare_attention_mask_for_generation(
+            self._prepare_attention_mask_for_generation(
                 input_ids, generation_config.pad_token_id, generation_config.eos_token_id
             )
 
         # 5. Prepare `max_length` depending on other stopping criteria.
-        input_ids_seq_length = input_ids.shape[-1]
+        input_ids_length = input_ids.shape[-1]
         has_default_max_length = kwargs.get("max_length") is None and generation_config.max_length is not None
-        if has_default_max_length and generation_config.max_new_tokens is None and generation_config.max_length == 20:
-            logger.warning(
-                f"Using the model-agnostic default `max_length` (={generation_config.max_length}) "
-                "to control the generation length.  recommend setting `max_new_tokens` to control the maximum length of the generation."
-            )
-        elif generation_config.max_new_tokens is not None:
-            if not has_default_max_length:
-                logger.warning(
-                    f"Both `max_new_tokens` (={generation_config.max_new_tokens}) and `max_length`(="
-                    f"{generation_config.max_length}) seem to have been set. `max_new_tokens` will take precedence. "
-                    "Please refer to the documentation for more information. "
-                    "(https://huggingface.co/docs/transformers/main/en/main_classes/text_generation)"
-                )
-            generation_config.max_length = generation_config.max_new_tokens + input_ids_seq_length
-
-        if generation_config.min_length is not None and generation_config.min_length > generation_config.max_length:
-            raise ValueError(
-                f"Unfeasible length constraints: the minimum length ({generation_config.min_length}) is larger than"
-                f" the maximum length ({generation_config.max_length})"
-            )
-        if input_ids_seq_length >= generation_config.max_length:
-            logger.warning(
-                f"Input length of decoder_input_ids is {input_ids_seq_length}, but `max_length` is set to"
-                f" {generation_config.max_length}. This can lead to unexpected behavior. You should consider"
-                " increasing `max_new_tokens`."
-            )
+        has_default_min_length = kwargs.get("min_length") is None and generation_config.min_length is not None
+        generation_config = self._prepare_generated_length(
+            generation_config=generation_config,
+            has_default_max_length=has_default_max_length,
+            has_default_min_length=has_default_min_length,
+            model_input_name=model_input_name,
+            inputs_tensor=input_ids,
+            input_ids_length=input_ids_length,
+        )
 
         # 6. Prepare `input_ids` which will be used for auto-regressive generation
         # Build the delay pattern mask for offsetting each codebook prediction by 1 (this behaviour is specific to Parler-TTS)
         input_ids, delay_pattern_mask = self.build_delay_pattern_mask(
             input_ids,
-            bos_token_id=generation_config.bos_token_id,
-            pad_token_id=generation_config.pad_token_id,
+            pad_token_id=generation_config._decoder_start_token_tensor,
             max_length=generation_config.max_length,
         )
 
@@ -2107,7 +2377,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
         # 8. prepare distribution pre_processing samplers
         logits_processor = self._get_logits_processor(
             generation_config=generation_config,
-            input_ids_seq_length=input_ids_seq_length,
+            input_ids_seq_length=input_ids_length,
             encoder_input_ids=input_ids,
             prefix_allowed_tokens_fn=None,
             logits_processor=logits_processor,
@@ -2182,7 +2452,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
             max_length=output_ids.shape[1],
         )
 
-        mask = (mask != generation_config.bos_token_id) & (mask != generation_config.pad_token_id)
+        mask = (mask != generation_config._bos_token_tensor) & (mask != generation_config._pad_token_tensor)
         output_ids = output_ids[mask].reshape(batch_size, self.num_codebooks, -1)
 
         if generation_config.return_dict_in_generate:
@@ -2203,9 +2473,12 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
     main_input_name = "input_ids"
     supports_gradient_checkpointing = True
     _supports_flash_attn_2 = True
+<<<<<<< Updated upstream:parler_tts/modeling_parler_tts.py
     _supports_sdpa = True
     _supports_cache_class = True
     _supports_static_cache = True
+=======
+>>>>>>> Stashed changes:stable_speech/modeling_stable_speech.py
 
     def __init__(
         self,
@@ -2232,6 +2505,9 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                     f" `config.decoder.cross_attention_hidden_size` and {config.text_encoder.hidden_size} for"
                     " `config.text_encoder.hidden_size`."
                 )
+           
+        # add FA2 to decoder if needed     
+        config.decoder._attn_implementation = config._attn_implementation
 
         # initialize with config
         super().__init__(config)
@@ -2252,22 +2528,6 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         self.text_encoder = text_encoder
         self.audio_encoder = audio_encoder
         self.decoder = decoder
-
-        if self.text_encoder.config.to_dict() != self.config.text_encoder.to_dict():
-            logger.warning(
-                f"Config of the text_encoder: {self.text_encoder.__class__} is overwritten by shared text_encoder config:"
-                f" {self.config.text_encoder}"
-            )
-        if self.audio_encoder.config.to_dict() != self.config.audio_encoder.to_dict():
-            logger.warning(
-                f"Config of the audio_encoder: {self.audio_encoder.__class__} is overwritten by shared audio_encoder config:"
-                f" {self.config.audio_encoder}"
-            )
-        if self.decoder.config.to_dict() != self.config.decoder.to_dict():
-            logger.warning(
-                f"Config of the decoder: {self.decoder.__class__} is overwritten by shared decoder config:"
-                f" {self.config.decoder}"
-            )
 
         # make sure that the individual model's config refers to the shared config
         # so that the updates to the config will be synced
@@ -2304,6 +2564,14 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 "following discussion on GitHub: https://github.com/huggingface/transformers/issues/23350"
             )
 
+        audio_encoder_signature = set(inspect.signature(self.audio_encoder.decode).parameters.keys())
+        self.use_audio_scales = "audio_scales" in audio_encoder_signature
+
+        self.use_4dim_audio_codes = False
+        audio_type = audio_encoder.config.model_type
+        if audio_type in {"encodec", "dac_on_the_hub"} or (audio_type == "dac" and not is_dac_integrated_to_transformers):
+            self.use_4dim_audio_codes = True 
+ 
         # Initialize projection and embedding layers and tie text encoder and decoder weights if set accordingly
         self.post_init()
 
@@ -2565,13 +2833,17 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                     "`decoder_config` to `.from_sub_models_pretrained(...)`"
                 )
 
+<<<<<<< Updated upstream:parler_tts/modeling_parler_tts.py
             decoder = ParlerTTSForCausalLM.from_pretrained(decoder_pretrained_model_name_or_path, **kwargs_decoder)
+=======
+            decoder = StableSpeechForCausalLM.from_pretrained(decoder_pretrained_model_name_or_path, **kwargs_decoder, attn_implementation=kwargs.pop("attn_implementation", None))
+>>>>>>> Stashed changes:stable_speech/modeling_stable_speech.py
 
         # instantiate config with corresponding kwargs
         config = ParlerTTSConfig.from_sub_models_config(
             text_encoder.config, audio_encoder.config, decoder.config, **kwargs
         )
-        return cls(text_encoder=text_encoder, audio_encoder=audio_encoder, decoder=decoder, config=config)
+        return cls(text_encoder=text_encoder, audio_encoder=audio_encoder, decoder=decoder, config=config) # , torch_dtype=kwargs.pop("torch_dtype", None)
 
     @add_start_docstrings_to_model_forward(MUSICGEN_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=Seq2SeqLMOutput, config_class=_CONFIG_FOR_DOC)
@@ -3040,24 +3312,35 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         # 3. make sure that encoder returns `ModelOutput`
         model_input_name = model_input_name if model_input_name is not None else self.audio_encoder.main_input_name
         encoder_kwargs["return_dict"] = True
+        
+        if "num_quantizers" in encoder_signature:
+            encoder_kwargs["num_quantizers"] = self.config.decoder.num_codebooks
+        elif "num_codebooks" in encoder_signature:
+            encoder_kwargs["num_codebooks"] = self.config.decoder.num_codebooks
 
         encoder_kwargs[model_input_name] = input_values
         audio_encoder_outputs = encoder.encode(**encoder_kwargs)
         audio_codes = audio_encoder_outputs.audio_codes
-        audio_scales = audio_encoder_outputs.audio_scales
+        audio_scales = audio_encoder_outputs.get("audio_scales")
 
-        frames, bsz, codebooks, seq_len = audio_codes.shape
+        if audio_codes.ndim == 3:
+            bsz, codebooks, seq_len = audio_codes.shape
+            decoder_input_ids = audio_codes.reshape(bsz * self.decoder.num_codebooks, seq_len)
+        else:
+            frames, bsz, codebooks, seq_len = audio_codes.shape
 
-        if frames != 1:
-            raise ValueError(
-                f"Expected 1 frame in the audio code outputs, got {frames} frames. Ensure chunking is "
-                "disabled by setting `chunk_length=None` in the audio encoder."
-            )
+            if frames != 1:
+                raise ValueError(
+                    f"Expected 1 frame in the audio code outputs, got {frames} frames. Ensure chunking is "
+                    "disabled by setting `chunk_length=None` in the audio encoder."
+                )
 
-        decoder_input_ids = audio_codes[0, ...].reshape(bsz * self.decoder.num_codebooks, seq_len)
+            decoder_input_ids = audio_codes[0, ...].reshape(bsz * self.decoder.num_codebooks, seq_len)
 
         model_kwargs["decoder_input_ids"] = decoder_input_ids
-        model_kwargs["audio_scales"] = audio_scales
+        if audio_scales is not None:
+            model_kwargs["audio_scales"] = audio_scales
+
         return model_kwargs
 
     def prepare_decoder_input_ids_from_labels(self, labels: torch.Tensor):
@@ -3387,7 +3670,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 )
 
         # build the delay pattern mask for offsetting each codebook prediction by 1 (this behaviour is specific to Parler-TTS)
-        delayed_input_ids, decoder_delay_pattern_mask = self.decoder.build_delay_pattern_mask(
+        _, decoder_delay_pattern_mask = self.decoder.build_delay_pattern_mask(
             input_ids,
             bos_token_id=generation_config._bos_token_tensor,
             pad_token_id=generation_config._pad_token_tensor,
@@ -3398,19 +3681,10 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
 
         # input_ids are ready to be placed on the streamer (if used)
         if streamer is not None:
-            streamer.put(delayed_input_ids.cpu())
+            streamer.put(input_ids.cpu())
 
         # 7. determine generation mode
-        is_greedy_gen_mode = (
-            (generation_config.num_beams == 1)
-            and (generation_config.num_beam_groups == 1)
-            and generation_config.do_sample is False
-        )
-        is_sample_gen_mode = (
-            (generation_config.num_beams == 1)
-            and (generation_config.num_beam_groups == 1)
-            and generation_config.do_sample is True
-        )
+        generation_mode = generation_config.get_generation_mode()
 
         # 8. prepare distribution pre_processing samplers
         logits_processor = self._get_logits_processor(
@@ -3419,7 +3693,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             encoder_input_ids=inputs_tensor,
             prefix_allowed_tokens_fn=None,
             logits_processor=logits_processor,
-            device=delayed_input_ids.device,
+            device=input_ids.device,
         )
 
         # 9. prepare stopping criteria
@@ -3427,41 +3701,19 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             generation_config=generation_config, stopping_criteria=stopping_criteria
         )
 
-        if is_greedy_gen_mode:
-            if generation_config.num_return_sequences > 1:
-                raise ValueError(
-                    "num_return_sequences has to be 1 when doing greedy search, "
-                    f"but is {generation_config.num_return_sequences}."
-                )
-
-            # 10. run greedy search
-            outputs = self._sample(
-                delayed_input_ids,
-                logits_processor=logits_processor,
-                stopping_criteria=stopping_criteria,
-                generation_config=generation_config,
-                synced_gpus=synced_gpus,
-                streamer=streamer,
-                **model_kwargs,
-            )
-
-        elif is_sample_gen_mode:
-            # 10. prepare logits warper
-            logits_warper = self._get_logits_warper(generation_config, device=delayed_input_ids.device)
-
+        if generation_mode in (GenerationMode.SAMPLE, GenerationMode.GREEDY_SEARCH):
             # expand input_ids with `num_return_sequences` additional sequences per batch
-            delayed_input_ids, model_kwargs = self._expand_inputs_for_generation(
-                input_ids=delayed_input_ids,
+            input_ids, model_kwargs = self._expand_inputs_for_generation(
+                input_ids=input_ids,
                 expand_size=generation_config.num_return_sequences,
                 is_encoder_decoder=self.config.is_encoder_decoder,
                 **model_kwargs,
             )
 
-            # 11. run sample
+            # 10. run sample
             outputs = self._sample(
-                delayed_input_ids,
+                input_ids,
                 logits_processor=logits_processor,
-                logits_warper=logits_warper,
                 stopping_criteria=stopping_criteria,
                 generation_config=generation_config,
                 synced_gpus=synced_gpus,
@@ -3486,8 +3738,8 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         # Revert the pattern delay mask by filtering the eos and bos token ids from the delay pattern mask
         _, mask = self.decoder.build_delay_pattern_mask(
             input_ids,
-            bos_token_id=generation_config.bos_token_id,
-            pad_token_id=generation_config.pad_token_id,
+            bos_token_id=generation_config._bos_token_tensor,
+            pad_token_id=generation_config._pad_token_tensor,
             max_length=output_ids.shape[1],
         )
 
@@ -3497,10 +3749,18 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         # append the frame dimension back to the audio codes
         output_ids = output_ids[None, ...]
 
-        audio_scales = model_kwargs.get("audio_scales")
-        if audio_scales is None:
-            audio_scales = [None] * batch_size
+        audio_decode_kwargs = {}
+        if self.use_audio_scales:
+            audio_scales = model_kwargs.get("audio_scales")
+            if audio_scales is None:
+                audio_scales = [None] * batch_size
+            audio_decode_kwargs["audio_scales"] = audio_scales
 
+        
+        if not self.use_4dim_audio_codes:
+            # remove chunk dim
+            output_ids = output_ids.squeeze(0)
+            
         decode_sequentially = (
             generation_config.bos_token_id in output_ids
             or generation_config.pad_token_id in output_ids
@@ -3508,18 +3768,23 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         )
         if not decode_sequentially:
             output_values = self.audio_encoder.decode(
-                output_ids,
-                audio_scales=audio_scales,
+                audio_codes=output_ids,
+                **audio_decode_kwargs,
             ).audio_values.squeeze(1)
             output_lengths = [audio.shape[0] for audio in output_values]
         else:
             output_values = []
             for sample_id in range(batch_size):
-                sample = output_ids[:, sample_id]
-                sample_mask = (sample >= self.audio_encoder.config.codebook_size).sum(dim=(0, 1)) == 0
+                sample = output_ids[:, sample_id] if self.use_4dim_audio_codes else output_ids[sample_id]
+                sample_mask = (sample >= self.audio_encoder.config.codebook_size)
+                sample_mask = (sample_mask.sum(dim=(0, 1)) == 0) if self.use_4dim_audio_codes else (sample_mask.sum(dim=0) == 0)
+                single_audio_decode_kwargs = {}
+                if self.use_audio_scales:
+                    single_audio_decode_kwargs["audio_scales"] = [audio_decode_kwargs["audio_scales"][sample_id]]
                 if sample_mask.sum() > 0:
-                    sample = sample[:, :, sample_mask]
-                    sample = self.audio_encoder.decode(sample[None, ...], [audio_scales[sample_id]]).audio_values
+                    sample = sample[:, :, sample_mask] if self.use_4dim_audio_codes else sample[:, sample_mask]
+                    sample = self.audio_encoder.decode(audio_codes=sample[None, ...], **single_audio_decode_kwargs).audio_values
+                    sample = sample if sample.ndim == 3 else sample.unsqueeze(0)
                     output_values.append(sample.transpose(0, 2))
                 else:
                     output_values.append(torch.zeros((1, 1, 1)).to(self.device))
