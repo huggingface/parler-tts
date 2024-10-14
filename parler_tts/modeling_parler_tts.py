@@ -3496,7 +3496,6 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             )
 
         mask = (mask != generation_config.bos_token_id) & (mask != generation_config.pad_token_id)
-
         output_ids = output_ids[mask].reshape(batch_size, self.decoder.num_codebooks, -1)
 
         # append the frame dimension back to the audio codes
