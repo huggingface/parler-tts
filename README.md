@@ -79,9 +79,12 @@ sf.write("parler_tts_out.wav", audio_arr, model.config.sampling_rate)
 
 ### 🎯 Using a specific speaker
 
-To ensure speaker consistency across generations, this checkpoint was also trained on 34 speakers, characterized by name (e.g. Jon, Lea, Gary, Jenna, Mike, Laura).
+To ensure speaker consistency across generations, this checkpoint was also trained on 34 speakers, characterized by name. The full list of available speakers includes:
+Laura, Gary, Jon, Lea, Karen, Rick, Brenda, David, Eileen, Jordan, Mike, Yann, Joy, James, Eric, Lauren, Rose, Will, Jason, Aaron, Naomie, Alisa, Patrick, Jerry, Tina, Jenna, Bill, Tom, Carol, Barbara, Rebecca, Anna, Bruce, Emily.
 
 To take advantage of this, simply adapt your text description to specify which speaker to use: `Jon's voice is monotone yet slightly fast in delivery, with a very close recording that almost has no background noise.`
+
+You can replace "Jon" with any of the names from the list above to utilize different speaker characteristics. Each speaker has unique vocal qualities that can be leveraged to suit your specific needs. For more detailed information on speaker performance with voice consistency, please refer [inference guide](INFERENCE.md#speaker-consistency).
 
 ```py
 import torch
