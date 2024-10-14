@@ -3483,13 +3483,17 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         # Apply the pattern mask to the final ids
         output_ids = self.decoder.apply_delay_pattern_mask(output_ids, model_kwargs["decoder_delay_pattern_mask"])
 
-        # Revert the pattern delay mask by filtering the eos and bos token ids from the delay pattern mask
-        _, mask = self.decoder.build_delay_pattern_mask(
-            input_ids,
-            bos_token_id=generation_config._bos_token_tensor,
-            pad_token_id=generation_config._pad_token_tensor,
-            max_length=output_ids.shape[1],
-        )
+        if "input_values" in model_kwargs:
+            # Handle input_values for voice steering
+            mask = output_ids
+        else:
+            # Revert the pattern delay mask by filtering the eos and bos token ids from the delay pattern mask
+            _, mask = self.decoder.build_delay_pattern_mask(
+                input_ids,
+                bos_token_id=generation_config.bos_token_id,
+                pad_token_id=generation_config.pad_token_id,
+                max_length=output_ids.shape[1],
+            )
 
         mask = (mask != generation_config.bos_token_id) & (mask != generation_config.pad_token_id)
         output_ids = output_ids[mask].reshape(batch_size, self.decoder.num_codebooks, -1)
