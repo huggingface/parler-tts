@@ -1,5 +1,7 @@
 import torch
 from dac.model import DAC
+from torch import nn
+
 from transformers import PreTrainedModel
 from transformers.models.encodec.modeling_encodec import EncodecDecoderOutput, EncodecEncoderOutput
 
@@ -11,6 +13,7 @@ from .configuration_dac import DACConfig
 
 class DACModel(PreTrainedModel):
     config_class = DACConfig
+    main_input_name = "input_values"
 
     # Set main input to 'input_values' for voice steering
     main_input_name = "input_values"
@@ -23,6 +26,9 @@ class DACModel(PreTrainedModel):
             latent_dim=config.latent_dim,
             codebook_size=config.codebook_size,
         )
+        
+        self.remove_weight_norm()
+        self.apply_weight_norm()
 
     def encode(
         self, input_values, padding_mask=None, bandwidth=None, return_dict=None, n_quantizers=None, sample_rate=None
@@ -137,3 +143,22 @@ class DACModel(PreTrainedModel):
 
     def forward(self, tensor):
         raise ValueError("`DACModel.forward` not implemented yet")
+    
+
+    def apply_weight_norm(self):
+        weight_norm = nn.utils.weight_norm
+        if hasattr(nn.utils.parametrizations, "weight_norm"):
+            weight_norm = nn.utils.parametrizations.weight_norm
+
+        def _apply_weight_norm(module):
+            if isinstance(module, nn.Conv1d) or isinstance(module, nn.ConvTranspose1d):
+                weight_norm(module)
+
+        self.apply(_apply_weight_norm)
+
+
+    def remove_weight_norm(self):
+        def _remove_weight_norm(module):
+            if isinstance(module, nn.Conv1d) or isinstance(module, nn.ConvTranspose1d):
+                nn.utils.remove_weight_norm(module)
+        self.apply(_remove_weight_norm)

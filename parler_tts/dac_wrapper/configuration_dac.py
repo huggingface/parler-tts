@@ -1,9 +1,11 @@
 
 from transformers import PretrainedConfig
+from importlib.metadata import version
+from packaging.version import Version
 
 
 class DACConfig(PretrainedConfig):
-    model_type = "dac"
+    model_type = "dac" if Version(version("transformers"))<= Version("4.44.2dev") else "dac_on_the_hub"
 
     def __init__(
         self,

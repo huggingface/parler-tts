@@ -129,7 +129,10 @@ def log_metric(
     """Helper function to log all training/evaluation metrics with the correct prefixes and styling."""
     log_metrics = {}
     for k, v in metrics.items():
-        log_metrics[f"{prefix}/{k}"] = v
+        if "codebook" in k:
+            log_metrics[f"codebook_{prefix}/{k}"] = v
+        else:
+            log_metrics[f"{prefix}/{k}"] = v
     log_metrics[f"{prefix}/time"] = train_time
     log_metrics[f"{prefix}/epoch"] = epoch
     if learning_rate is not None:
