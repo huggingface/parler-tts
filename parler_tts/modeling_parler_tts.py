@@ -3512,7 +3512,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 )
 
         # build the delay pattern mask for offsetting each codebook prediction by 1 (this behaviour is specific to Parler-TTS)
-        _, decoder_delay_pattern_mask = self.decoder.build_delay_pattern_mask(
+        delayed_input_ids, decoder_delay_pattern_mask = self.decoder.build_delay_pattern_mask(
             input_ids,
             bos_token_id=generation_config._bos_token_tensor,
             pad_token_id=generation_config._pad_token_tensor,
@@ -3523,7 +3523,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
 
         # input_ids are ready to be placed on the streamer (if used)
         if streamer is not None:
-            streamer.put(input_ids.cpu())
+            streamer.put(delayed_input_ids.cpu())
 
         # 7. determine generation mode
         generation_mode = generation_config.get_generation_mode()
@@ -3535,7 +3535,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             encoder_input_ids=inputs_tensor,
             prefix_allowed_tokens_fn=None,
             logits_processor=logits_processor,
-            device=input_ids.device,
+            device=delayed_input_ids.device,
         )
 
         # 9. prepare stopping criteria
@@ -3545,8 +3545,8 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
 
         if generation_mode in (GenerationMode.SAMPLE, GenerationMode.GREEDY_SEARCH):
             # expand input_ids with `num_return_sequences` additional sequences per batch
-            input_ids, model_kwargs = self._expand_inputs_for_generation(
-                input_ids=input_ids,
+            delayed_input_ids, model_kwargs = self._expand_inputs_for_generation(
+                input_ids=delayed_input_ids,
                 expand_size=generation_config.num_return_sequences,
                 is_encoder_decoder=self.config.is_encoder_decoder,
                 **model_kwargs,
@@ -3554,7 +3554,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
 
             # 10. run sample
             outputs = self._sample(
-                input_ids,
+                delayed_input_ids,
                 logits_processor=logits_processor,
                 stopping_criteria=stopping_criteria,
                 generation_config=generation_config,
@@ -3580,8 +3580,8 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         # Revert the pattern delay mask by filtering the eos and bos token ids from the delay pattern mask
         _, mask = self.decoder.build_delay_pattern_mask(
             input_ids,
-            bos_token_id=generation_config._bos_token_tensor,
-            pad_token_id=generation_config._pad_token_tensor,
+            bos_token_id=generation_config.bos_token_id,
+            pad_token_id=generation_config.pad_token_id,
             max_length=output_ids.shape[1],
         )
 

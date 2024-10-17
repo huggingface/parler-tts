@@ -7,6 +7,7 @@ Parler-TTS benefits from a number of optimizations that can make the model up to
 * [Compilation](#compilation)
 * [Streaming](#streaming)
 * [Batch generation](#batch-generation)
+* [Speaker Consistency](#speaker-consistency)
 
 ## Efficient Attention implementations
 
@@ -200,3 +201,64 @@ print(audio_1.shape, audio_2.shape)
 scipy.io.wavfile.write("sample_out.wav", rate=feature_extractor.sampling_rate, data=audio_1.cpu().numpy().squeeze())
 scipy.io.wavfile.write("sample_out_2.wav", rate=feature_extractor.sampling_rate, data=audio_2.cpu().numpy().squeeze())
 ```
+
+## Speaker Consistency
+
+The checkpoint was trained on 34 speakers. The full list of available speakers includes:
+Laura, Gary, Jon, Lea, Karen, Rick, Brenda, David, Eileen, Jordan, Mike, Yann, Joy, James, Eric, Lauren, Rose, Will, Jason, Aaron, Naomie, Alisa, Patrick, Jerry, Tina, Jenna, Bill, Tom, Carol, Barbara, Rebecca, Anna, Bruce, and Emily.
+
+However, the models performed better with certain speakers. Below are the top 20 speakers for each model variant, ranked by their average speaker similarity scores:
+
+### Large Model - Top 20 Speakers
+
+| Speaker | Similarity Score |
+|---------|------------------|
+| Will    | 0.906055         |
+| Eric    | 0.887598         |
+| Laura   | 0.877930         |
+| Alisa   | 0.877393         |
+| Patrick | 0.873682         |
+| Rose    | 0.873047         |
+| Jerry   | 0.871582         |
+| Jordan  | 0.870703         |
+| Lauren  | 0.867432         |
+| Jenna   | 0.866455         |
+| Karen   | 0.866309         |
+| Rick    | 0.863135         |
+| Bill    | 0.862207         |
+| James   | 0.856934         |
+| Yann    | 0.856787         |
+| Emily   | 0.856543         |
+| Anna    | 0.848877         |
+| Jon     | 0.848828         |
+| Brenda  | 0.848291         |
+| Barbara | 0.847998         |
+
+### Mini Model - Top 20 Speakers
+
+| Speaker | Similarity Score |
+|---------|------------------|
+| Jon     | 0.908301         |
+| Lea     | 0.904785         |
+| Gary    | 0.903516         |
+| Jenna   | 0.901807         |
+| Mike    | 0.885742         |
+| Laura   | 0.882666         |
+| Lauren  | 0.878320         |
+| Eileen  | 0.875635         |
+| Alisa   | 0.874219         |
+| Karen   | 0.872363         |
+| Barbara | 0.871509         |
+| Carol   | 0.863623         |
+| Emily   | 0.854932         |
+| Rose    | 0.852246         |
+| Will    | 0.851074         |
+| Patrick | 0.850977         |
+| Eric    | 0.845459         |
+| Rick    | 0.845020         |
+| Anna    | 0.844922         |
+| Tina    | 0.839160         |
+
+The numbers represent the average speaker similarity between a random snippet of the person speaking and a randomly Parler-generated snippet. Higher scores indicate better model performance in maintaining voice consistency.
+
+These scores are derived from [dataset for Mini](https://huggingface.co/datasets/ylacombe/parler-tts-mini-v1_speaker_similarity) and [dataset for Large](https://huggingface.co/datasets/ylacombe/parler-large-v1-og_speaker_similarity).
