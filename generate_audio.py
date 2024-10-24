@@ -5,7 +5,8 @@ import soundfile as sf
 import os
 import sys
 
-device = "mps" if torch.backends.mps.is_available() else torch.device("cpu")
+# device = "mps" if torch.backends.mps.is_available() else torch.device("cpu")
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Load the model and tokenizer
 model = ParlerTTSForConditionalGeneration.from_pretrained("parler-tts/parler-tts-mini-v1").to(device)
@@ -42,8 +43,11 @@ description = ("A soothing, mesmerizing, and mystical Indian female voice with s
 input_ids = tokenizer(description, return_tensors="pt").input_ids.to(device)
 prompt_input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(device)
 
+# Create an attention mask
+attention_mask = torch.ones(input_ids.shape, device=device)
+
 # Generate the speech
-generation = model.generate(input_ids=input_ids, prompt_input_ids=prompt_input_ids)
+generation = model.generate(input_ids=input_ids, prompt_input_ids=prompt_input_ids, attention_mask=attention_mask)
 audio_arr = generation.cpu().numpy().squeeze()
 
 # Save the output as a .wav file in the corresponding folder

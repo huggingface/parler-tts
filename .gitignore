@@ -172,3 +172,5 @@ tags
 
 wandb
 myenv
+scripts/*
+output/*
