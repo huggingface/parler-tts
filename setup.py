@@ -18,7 +18,7 @@ import setuptools
 
 
 _deps = [
-    "transformers>=4.45.2", # ,<=4.43.3
+    "transformers>=4.46.0,<=4.46.0",
     "torch",
     "sentencepiece",
     "descript-audio-codec",
