@@ -64,6 +64,7 @@ from training.utils import (
 from training.arguments import ModelArguments, DataTrainingArguments, ParlerTTSTrainingArguments
 from training.data import load_multiple_datasets, DataCollatorParlerTTSWithPadding, DataCollatorEncodecWithPadding
 from training.eval import clap_similarity, wer, si_sdr
+from training.peft_utils import replace_linear_with_lora, set_non_lora_gradients_to_false
 
 logger = logging.getLogger(__name__)
 
@@ -332,6 +333,11 @@ def main():
         trust_remote_code=data_args.trust_remote_code,
         attn_implementation=model_args.attn_implementation,
     )
+
+    do_peft = True 
+    if do_peft: 
+        replace_linear_with_lora(model.decoder, lora_r=16, lora_alpha=32, lora_dropout=0.05)
+        set_non_lora_gradients_to_false(model.decoder)
 
     # enable gradient checkpointing if necessary
     if training_args.gradient_checkpointing:
