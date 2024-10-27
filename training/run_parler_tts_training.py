@@ -68,6 +68,7 @@ from training.peft_utils import replace_linear_with_lora, set_non_lora_gradients
 
 logger = logging.getLogger(__name__)
 
+os.environ["WANDB_MODE"] = "offline"
 
 def main():
     # See all possible arguments in src/transformers/training_args.py
@@ -334,10 +335,11 @@ def main():
         attn_implementation=model_args.attn_implementation,
     )
 
-    do_peft = True 
-    if do_peft: 
-        replace_linear_with_lora(model.decoder, lora_r=16, lora_alpha=32, lora_dropout=0.05)
+    if training_args.use_peft == True: 
+        replace_linear_with_lora(model.decoder, lora_r=8, lora_alpha=16, lora_dropout=0.05)
         set_non_lora_gradients_to_false(model.decoder)
+    
+    print_trainable_params(model)
 
     # enable gradient checkpointing if necessary
     if training_args.gradient_checkpointing:
@@ -1187,6 +1189,13 @@ def main():
             break
 
     accelerator.end_training()
+
+def print_trainable_params(model):
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    non_trainable = sum(p.numel() for p in model.parameters() if not p.requires_grad)
+    total_params = trainable + non_trainable
+    trainable_percent = 100 * trainable / total_params
+    print(f"Trainable: {trainable:,} | Non-trainable: {non_trainable:,} | Percent Trainable params: {trainable_percent:.2f}%")
 
 
 if __name__ == "__main__":
