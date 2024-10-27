@@ -13,8 +13,8 @@ class LoRALinear(nn.Module):
         self.lora_A = nn.Linear(linear_layer.in_features, lora_r, bias=False)
         self.lora_B = nn.Linear(lora_r, linear_layer.out_features, bias=False)
 
-        init.zeros_(self.lora_A.weight)
-        init.zeros_(self.lora_B.weight)
+        nn.init.zeros_(self.lora_A.weight)
+        nn.init.zeros_(self.lora_B.weight)
 
         self.scaling = self.lora_alpha / self.lora_r
         
