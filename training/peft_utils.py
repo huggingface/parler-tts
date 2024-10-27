@@ -1,6 +1,7 @@
 import torch.nn as nn
 import torch
 from tqdm import tqdm 
+import math 
 
 class LoRALinear(nn.Module):
     def __init__(self, linear_layer, lora_r, lora_alpha, lora_dropout):
@@ -13,15 +14,15 @@ class LoRALinear(nn.Module):
         self.lora_A = nn.Linear(linear_layer.in_features, lora_r, bias=False)
         self.lora_B = nn.Linear(lora_r, linear_layer.out_features, bias=False)
 
-        nn.init.zeros_(self.lora_A.weight)
+        nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5)) # following microsoft/LoRA
         nn.init.zeros_(self.lora_B.weight)
 
         self.scaling = self.lora_alpha / self.lora_r
         
     def forward(self, x):
-        x = self.lora_dropout(x)
-        x = self.linear(x) + self.lora_B(self.lora_A(x)) * self.scaling
-        return x
+        out = self.linear(x)
+        out = out + self.lora_B(self.lora_A(self.lora_dropout(x))) * self.scaling
+        return out
 
 def replace_linear_with_lora_old(model, lora_r, lora_alpha, lora_dropout):
     for name, module in model.named_modules():
