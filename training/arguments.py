@@ -360,3 +360,9 @@ class ParlerTTSTrainingArguments(Seq2SeqTrainingArguments):
             )
         },
     )
+    use_peft: bool = field(
+        default=False,
+        metadata={
+            "help": "Flag to use parameter efficient fine-tuning, with LORA, for the decoder transformer. Default is without LORA"
+        },
+    )
