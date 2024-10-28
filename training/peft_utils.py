@@ -14,8 +14,9 @@ class LoRALinear(nn.Module):
         self.lora_A = nn.Linear(linear_layer.in_features, lora_r, bias=False)
         self.lora_B = nn.Linear(lora_r, linear_layer.out_features, bias=False)
 
-        nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5)) # following microsoft/LoRA
+        nn.init.kaiming_uniform_(self.lora_A.weight, a=math.sqrt(5)) # following microsoft/LoRA
         nn.init.zeros_(self.lora_B.weight)
+        #nn.init.zeros_(self.lora_A.weight)
 
         self.scaling = self.lora_alpha / self.lora_r
         
