@@ -366,3 +366,31 @@ class ParlerTTSTrainingArguments(Seq2SeqTrainingArguments):
             "help": "Flag to use parameter efficient fine-tuning, with LORA, for the decoder transformer. Default is without LORA"
         },
     )
+
+    lora_r: int = field(
+    default=8,
+    metadata={
+        "help": (
+            "The rank of the low-rank adaptation matrices in LORA. "
+        )
+    },
+    )
+
+    lora_alpha: float = field(
+    default=16.0,
+    metadata={
+        "help": (
+            "The scaling factor for the LORA updates. Controls strength of the adaptation "
+        )
+    },
+    )
+
+    lora_dropout: float = field(
+    default=0.05,
+    metadata={
+        "help": (
+            "The dropout rate applied to the LORA layers during training. "
+        )
+    },
+    )
+
