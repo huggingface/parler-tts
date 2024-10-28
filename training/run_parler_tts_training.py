@@ -336,7 +336,7 @@ def main():
     )
 
     if training_args.use_peft == True: 
-        replace_linear_with_lora(model.decoder, lora_r=8, lora_alpha=16, lora_dropout=0.05)
+        replace_linear_with_lora(model.decoder, lora_r=training_args.lora_r, lora_alpha=training_args.lora_alpha, lora_dropout=training_args.lora_dropout)
         set_non_lora_gradients_to_false(model.decoder)
     
     print_trainable_params(model)
