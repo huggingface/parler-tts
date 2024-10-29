@@ -7,6 +7,7 @@ class LoRALinear(nn.Module):
     def __init__(self, linear_layer, lora_r, lora_alpha, lora_dropout):
         super().__init__()
         self.linear = linear_layer
+        
         self.lora_r = lora_r
         self.lora_alpha = lora_alpha
         self.lora_dropout = nn.Dropout(p=lora_dropout)
@@ -19,10 +20,10 @@ class LoRALinear(nn.Module):
         #nn.init.zeros_(self.lora_A.weight)
 
         self.scaling = self.lora_alpha / self.lora_r
-        
+        self.linear.requires_grad_(False)
+
     def forward(self, x):
-        out = self.linear(x)
-        out = out + self.lora_B(self.lora_A(self.lora_dropout(x))) * self.scaling
+        out = self.linear(x) + self.lora_B(self.lora_A(self.lora_dropout(x))) * self.scaling
         return out
 
 def replace_linear_with_lora_old(model, lora_r, lora_alpha, lora_dropout):
