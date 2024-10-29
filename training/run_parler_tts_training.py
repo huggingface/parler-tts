@@ -334,7 +334,7 @@ def main():
         config=config,
         token=data_args.token,
         trust_remote_code=data_args.trust_remote_code,
-        attn_implementation=model_args.attn_implementation,
+        attn_implementation={"decoder": model_args.attn_implementation, "text_encoder": "eager"},
     )
 
     # enable gradient checkpointing if necessary
