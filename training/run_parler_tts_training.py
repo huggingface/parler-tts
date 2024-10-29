@@ -336,11 +336,9 @@ def main():
     )
 
     if training_args.use_peft == True: 
+        logger.info('\n--Using PEFT, replacing layers--\n')
         replace_linear_with_lora(model.decoder, lora_r=training_args.lora_r, lora_alpha=training_args.lora_alpha, lora_dropout=training_args.lora_dropout)
-        set_non_lora_gradients_to_false(model.decoder)
     
-    print_trainable_params(model)
-
     # enable gradient checkpointing if necessary
     if training_args.gradient_checkpointing:
         model.gradient_checkpointing_enable()
@@ -757,6 +755,8 @@ def main():
 
     # Prepare everything with accelerate
     model, optimizer, lr_scheduler = accelerator.prepare(model, optimizer, lr_scheduler)
+
+    print_trainable_params(model) # print trainable params, for lora
 
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {total_train_steps * train_batch_size * gradient_accumulation_steps}")
