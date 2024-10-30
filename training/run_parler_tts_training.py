@@ -23,7 +23,7 @@ import sys
 import time
 from multiprocess import set_start_method
 from datetime import timedelta
-
+import inspect
 from tqdm import tqdm
 from pathlib import Path
 
@@ -305,13 +305,17 @@ def main():
         token=data_args.token,
         trust_remote_code=data_args.trust_remote_code,
     )
+ 
+    if training_args.codebook_weights is not None and len(training_args.codebook_weights) != config.decoder.num_codebooks:
+        raise ValueError(f"`codebook_weights` has length {len(training_args.codebook_weights)} when it should be of length {config.decoder.num_codebooks}.")
 
     # update pad token id and decoder_start_token_id
     config.decoder.update(
         {
             "cross_attention_implementation_strategy": model_args.cross_attention_implementation_strategy
             if model_args.cross_attention_implementation_strategy is not None
-            else None
+            else None,
+            "codebook_weights": training_args.codebook_weights if training_args.codebook_weights is not None else config.decoder.codebook_weights
         }
     )
     config.update(
@@ -330,7 +334,7 @@ def main():
         config=config,
         token=data_args.token,
         trust_remote_code=data_args.trust_remote_code,
-        attn_implementation=model_args.attn_implementation,
+        attn_implementation={"decoder": model_args.attn_implementation, "text_encoder": "eager"},
     )
 
     # enable gradient checkpointing if necessary
@@ -422,12 +426,22 @@ def main():
             max_length=max_target_length,
             padding=padding,
         )
+        encoder_signature = set(inspect.signature(audio_decoder.forward).parameters)
 
         def apply_audio_decoder(batch):
             len_audio = batch.pop("len_audio")
             audio_decoder.to(batch["input_values"].device).eval()
+            if bandwidth is not None:
+                batch["bandwidth"] = bandwidth
+            elif "num_quantizers" in encoder_signature:
+                batch["num_quantizers"] = num_codebooks
+            elif "num_codebooks" in encoder_signature:
+                batch["num_codebooks"] = num_codebooks
+            elif "n_quantizers" in encoder_signature:
+                batch["n_quantizers"] = num_codebooks
+
             with torch.no_grad():
-                labels = audio_decoder.encode(**batch, bandwidth=bandwidth)["audio_codes"]
+                labels = audio_decoder.encode(**batch)["audio_codes"]
             output = {}
             output["len_audio"] = len_audio
             # (1, bsz, codebooks, seq_len) -> (bsz, seq_len, codebooks)
@@ -715,6 +729,11 @@ def main():
         eval_steps = steps_per_epoch
     else:
         eval_steps = training_args.eval_steps
+        
+    if training_args.eval_generation_steps is None:
+        eval_generation_steps = eval_steps
+    else:
+        eval_generation_steps = training_args.eval_generation_steps
 
     # T5 doesn't support fp16
     autocast_kwargs = AutocastKwargs(enabled=(mixed_precision != "fp16"))
@@ -894,6 +913,10 @@ def main():
         ce_loss = outputs.loss
 
         metrics = {"loss": ce_loss}
+        
+        # per CE loss
+        per_codebook_losses = outputs.per_codebook_losses
+        metrics.update({f"codebook_{i}_loss": l for (i,l) in enumerate(per_codebook_losses)})
         return ce_loss, metrics
 
     # Define eval fn
@@ -938,6 +961,10 @@ def main():
         # CE (data) loss
         ce_loss = outputs.loss
         metrics = {"loss": ce_loss}
+        
+        # per CE loss
+        per_codebook_losses = outputs.per_codebook_losses
+        metrics.update({f"codebook_{i}_loss": l for (i,l) in enumerate(per_codebook_losses)})
         return metrics
 
     def generate_step(batch, accelerator):
@@ -1072,13 +1099,13 @@ def main():
                         eval_metric = {key: val.unsqueeze(0) if val.ndim == 0 else val for (key,val) in eval_metric.items()}
                         eval_metrics.append(eval_metric)
 
-                    if training_args.predict_with_generate:
+                    if training_args.predict_with_generate and (cur_step % eval_generation_steps == 0 or cur_step == total_train_steps):
                         validation_dataloader = DataLoader(
                             vectorized_datasets["eval"],
                             collate_fn=data_collator,
                             batch_size=per_device_eval_batch_size,
                             drop_last=False,
-                            num_workers=training_args.dataloader_pin_memory,
+                            num_workers=training_args.eval_dataloader_num_workers,
                             pin_memory=training_args.dataloader_pin_memory,
                         )
                         validation_dataloader = accelerator.prepare(validation_dataloader)
@@ -1109,7 +1136,7 @@ def main():
 
                     # compute metrics
                     metrics_desc = ""
-                    if training_args.predict_with_generate:
+                    if training_args.predict_with_generate and (cur_step % eval_generation_steps == 0 or cur_step == total_train_steps):
                         if accelerator.is_local_main_process:
                             (
                                 metric_values,
@@ -1163,7 +1190,7 @@ def main():
                     eval_metrics, eval_preds, eval_descriptions, eval_prompts, batch, eval_metric = release_memory(
                         eval_metrics, eval_preds, eval_descriptions, eval_prompts, batch, eval_metric
                     )
-                    if training_args.predict_with_generate:
+                    if training_args.predict_with_generate and (cur_step % eval_generation_steps == 0 or cur_step == total_train_steps):
                         generated_audios, input_ids, prompts = release_memory(generated_audios, input_ids, prompts)
 
                     # train mode

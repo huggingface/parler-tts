@@ -14,5 +14,12 @@ from .modeling_parler_tts import (
 
 from .streamer import ParlerTTSStreamer
 
-AutoConfig.register("dac", DACConfig)
+from importlib.metadata import version
+from packaging.version import Version
+
+if Version(version("transformers"))<= Version("4.44.2dev"):
+    AutoConfig.register("dac", DACConfig)
+else:
+    AutoConfig.register("dac_on_the_hub", DACConfig)
+
 AutoModel.register(DACConfig, DACModel)

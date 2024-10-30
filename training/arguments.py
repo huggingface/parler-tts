@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, List
 
 from transformers import Seq2SeqTrainingArguments
 
@@ -359,4 +359,17 @@ class ParlerTTSTrainingArguments(Seq2SeqTrainingArguments):
                 "This is a proxy measure to compute WER on clean audios, provided that the model learn to generate clean audios."
             )
         },
+    )
+    eval_generation_steps: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": (
+                "Number of update steps between two generation evaluation.  Will default to the same"
+                "value as `eval_steps` if not set. Should be an integer and a multiple of `eval_steps`."
+            )
+        },
+    )       
+    codebook_weights: Optional[List[float]] = field(
+        default=None,
+        metadata={"help": "Weights applied to each codebook."},
     )

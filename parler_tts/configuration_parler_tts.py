@@ -17,6 +17,10 @@
 from transformers import AutoConfig, logging
 from transformers.configuration_utils import PretrainedConfig
 
+from importlib.metadata import version
+from packaging.version import Version
+
+use_dac_on_the_hub = Version(version("transformers")) > Version("4.44.2dev")
 
 logger = logging.get_logger(__name__)
 
@@ -91,6 +95,10 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
             The base period of the RoPE embeddings.
         cross_attention_implementation_strategy (`str`, *optional*):
             If not specified, the cross-attention implementation will be the same as `_attn_implementation`. If `always_eager`, it will always be the eager implementation. If `always_sdpa`, it will always be the sdpa implementation.
+        use_fused_lm_heads(`bool`, *optional*, defaults to `False`):
+            Whether to fuse audio LM heads instead of applying them sequentially.
+        codebook_weights(`List[int]`, *optional*):
+            Weights applied to each codebook when computing the loss.
     """
 
     model_type = "parler_tts_decoder"
@@ -122,6 +130,8 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
         rope_embeddings=False,
         rope_theta=10_000.0,
         cross_attention_implementation_strategy=None,
+        use_fused_lm_heads=False,
+        codebook_weights=None,
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -148,7 +158,11 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
         self.rope_embeddings = rope_embeddings
         self.rope_theta = rope_theta
         self.cross_attention_implementation_strategy = cross_attention_implementation_strategy
+        self.use_fused_lm_heads = use_fused_lm_heads
+        self.codebook_weights = codebook_weights
 
+        if codebook_weights is not None and len(codebook_weights) != num_codebooks:
+            raise ValueError(f"`codebook_weights` has length {len(codebook_weights)} when it should be of length {num_codebooks}.")
         super().__init__(
             pad_token_id=pad_token_id,
             bos_token_id=bos_token_id,
@@ -234,6 +248,11 @@ class ParlerTTSConfig(PretrainedConfig):
         audio_encoder_config = kwargs.pop("audio_encoder")
         audio_encoder_model_type = audio_encoder_config.pop("model_type")
 
+        model_version = kwargs.get("transformers_version", None)
+        if model_version is not None and Version(model_version) <= Version("4.44.2dev") and use_dac_on_the_hub and audio_encoder_model_type=="dac":
+            # here we have to manually change model type if DAC based on transformers version
+            audio_encoder_model_type = "dac_on_the_hub"
+
         decoder_config = kwargs.pop("decoder")
 
         self.vocab_size = vocab_size
@@ -270,21 +289,3 @@ class ParlerTTSConfig(PretrainedConfig):
     # This is a property because you might want to change the codec model on the fly
     def sampling_rate(self):
         return self.audio_encoder.sampling_rate
-
-    # Copy from musicgen
-    @property
-    def _attn_implementation(self):
-        # This property is made private for now (as it cannot be changed and a PreTrainedModel.use_attn_implementation method needs to be implemented.)
-        if hasattr(self, "_attn_implementation_internal"):
-            if self._attn_implementation_internal is None:
-                # `config.attn_implementation` should never be None, for backward compatibility.
-                return "eager"
-            else:
-                return self._attn_implementation_internal
-        else:
-            return "eager"
-
-    @_attn_implementation.setter
-    def _attn_implementation(self, value):
-        self._attn_implementation_internal = value
-        self.decoder._attn_implementation = value
