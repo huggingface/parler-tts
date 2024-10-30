@@ -64,7 +64,7 @@ from training.utils import (
 from training.arguments import ModelArguments, DataTrainingArguments, ParlerTTSTrainingArguments
 from training.data import load_multiple_datasets, DataCollatorParlerTTSWithPadding, DataCollatorEncodecWithPadding
 from training.eval import clap_similarity, wer, si_sdr
-from training.peft_utils import replace_linear_with_lora, set_non_lora_gradients_to_false
+from training.peft_utils import replace_linear_with_lora, replace_lora_with_linear
 
 logger = logging.getLogger(__name__)
 
