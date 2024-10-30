@@ -17,7 +17,6 @@ class LoRALinear(nn.Module):
 
         nn.init.kaiming_uniform_(self.lora_A.weight, a=math.sqrt(5)) # following microsoft/LoRA
         nn.init.zeros_(self.lora_B.weight)
-        #nn.init.zeros_(self.lora_A.weight)
 
         self.scaling = self.lora_alpha / self.lora_r
         self.linear.requires_grad_(False)
@@ -26,18 +25,10 @@ class LoRALinear(nn.Module):
         out = self.linear(x) + self.lora_B(self.lora_A(self.lora_dropout(x))) * self.scaling
         return out
 
-def replace_linear_with_lora_old(model, lora_r, lora_alpha, lora_dropout):
-    for name, module in model.named_modules():
-        if any(item in name for item in ['embed_prompts', 'lm_heads']):
-            print('Ignored adding peft to ', name)
-            continue
-
-        if isinstance(module, nn.Linear):
-            lora_linear = LoRALinear(module, lora_r, lora_alpha, lora_dropout)
-            setattr(model, name, lora_linear)
-    return model
-
 def replace_linear_with_lora(model, lora_r, lora_alpha, lora_dropout):
+    """
+    Given a model, replaces all linear layers with a Linear LORA layer in-place. Returns model
+    """
     full_name_dict = {module: name for name, module in model.named_modules()}
     linear_info = {}
     modules = [model]
@@ -74,12 +65,3 @@ def replace_linear_with_lora(model, lora_r, lora_alpha, lora_dropout):
     print('Replaced linear layers with low-rank layers.')
     return model
 
-def set_non_lora_gradients_to_false(model):
-    for name, param in model.named_parameters():
-        if "lora_" not in name:
-            param.requires_grad = False
-
-        if 'lm_heads' in name or 'embed_prompts' in name:
-            param.requires_grad = True 
-            print("Using gradients for lm_heads or embed_prompts", name)
-    return model
