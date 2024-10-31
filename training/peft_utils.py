@@ -22,7 +22,7 @@ class LoRALinear(nn.Module):
         self.linear.requires_grad_(False)
 
     def forward(self, x):
-        out = self.linear(x) + self.lora_B(self.lora_A(self.lora_dropout(x))) * self.scaling
+        out = self.linear(x) + torch.relu(self.lora_B(self.lora_A(self.lora_dropout(x))) * self.scaling)
         return out
 
     def return_weights_without_lora(self):
