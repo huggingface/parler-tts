@@ -17,13 +17,12 @@ class LoRALinear(nn.Module):
 
         nn.init.kaiming_uniform_(self.lora_A.weight, a=math.sqrt(5)) # following microsoft/LoRA
         nn.init.zeros_(self.lora_B.weight)
-        #nn.init.zeros_(self.lora_A.weight)
 
         self.scaling = self.lora_alpha / self.lora_r
         self.linear.requires_grad_(False)
 
     def forward(self, x):
-        out = self.linear(x) + self.lora_B(self.lora_A(self.lora_dropout(x))) * self.scaling
+        out = self.linear(x) + torch.relu(self.lora_B(self.lora_A(self.lora_dropout(x))) * self.scaling)
         return out
 
 def replace_linear_with_lora_old(model, lora_r, lora_alpha, lora_dropout):
