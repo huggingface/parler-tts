@@ -42,6 +42,11 @@ class ParlerTTSStreamer(BaseStreamer):
         self.audio_encoder = model.audio_encoder
         self.generation_config = model.generation_config
         self.device = device if device is not None else model.device
+        self.use_audio_scales = model.use_audio_scales
+        self.use_4dim_audio_codes = model.use_4dim_audio_codes
+        self.audio_kwargs = {}
+        if self.use_audio_scales:
+            self.audio_kwargs["audio_scales"] = [None]
 
         # variables used in the streaming process
         self.play_steps = play_steps
@@ -72,8 +77,10 @@ class ParlerTTSStreamer(BaseStreamer):
         # revert the pattern delay mask by filtering the pad token id
         mask = (delay_pattern_mask != self.generation_config.bos_token_id) & (delay_pattern_mask != self.generation_config.pad_token_id)
         input_ids = input_ids[mask].reshape(1, self.decoder.num_codebooks, -1)
-        # append the frame dimension back to the audio codes
-        input_ids = input_ids[None, ...]
+
+        if self.use_4dim_audio_codes:
+            # append the frame dimension back to the audio codes
+            input_ids = input_ids[None, ...]
 
         # send the input_ids to the correct device
         input_ids = input_ids.to(self.audio_encoder.device)
@@ -84,17 +91,19 @@ class ParlerTTSStreamer(BaseStreamer):
             or self.generation_config.eos_token_id in input_ids
         )
         if not decode_sequentially:
-            output_values = self.audio_encoder.decode(
-                input_ids,
-                audio_scales=[None],
-            )
+            sample = self.audio_encoder.decode(
+                audio_codes=input_ids,
+                **self.audio_kwargs,
+            ).audio_values
+            output_values = sample if sample.ndim == 3 else sample.unsqueeze(0)
         else:
-            sample = input_ids[:, 0]
-            sample_mask = (sample >= self.audio_encoder.config.codebook_size).sum(dim=(0, 1)) == 0
-            sample = sample[:, :, sample_mask]
-            output_values = self.audio_encoder.decode(sample[None, ...], [None])
+            sample = input_ids[:, 0] if self.use_4dim_audio_codes else input_ids[0]
+            sample_mask = ((sample >= self.audio_encoder.config.codebook_size).sum(dim=(0, 1)) == 0) if self.use_4dim_audio_codes else ((sample >= self.audio_encoder.config.codebook_size).sum(dim=0) == 0)
+            sample = sample[:, :, sample_mask] if self.use_4dim_audio_codes else sample[:, sample_mask]
+            sample = self.audio_encoder.decode(audio_codes=sample[None, ...], **self.audio_kwargs).audio_values
+            output_values = sample if sample.ndim == 3 else sample.unsqueeze(0)
 
-        audio_values = output_values.audio_values[0, 0]
+        audio_values = output_values[0, 0]
         return audio_values.cpu().float().numpy()
 
     def put(self, value):
