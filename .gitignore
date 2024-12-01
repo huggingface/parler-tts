@@ -171,3 +171,6 @@ tags
 .ruff_cache
 
 wandb
+myenv
+scripts/*
+output/*
