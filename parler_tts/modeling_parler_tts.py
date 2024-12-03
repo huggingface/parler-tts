@@ -60,6 +60,7 @@ from transformers.utils.import_utils import is_flash_attn_2_available, is_flash_
 
 from .configuration_parler_tts import ParlerTTSConfig, ParlerTTSDecoderConfig
 from .dac_wrapper import DACConfig, DACModel
+from .logits_processors import ParlerTTSLogitsProcessor
 
 from importlib.metadata import version
 from packaging.version import Version
@@ -3401,9 +3402,6 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             model_kwargs["encoder_outputs"] = BaseModelOutput(last_hidden_state=model_kwargs["encoder_outputs"][0])
 
         # 2. Set generation parameters if not already defined
-        logits_processor = logits_processor if logits_processor is not None else LogitsProcessorList()
-        stopping_criteria = stopping_criteria if stopping_criteria is not None else StoppingCriteriaList()
-
         requires_attention_mask = "encoder_outputs" not in model_kwargs
         kwargs_has_attention_mask = model_kwargs.get("attention_mask", None) is not None
 
@@ -3413,6 +3411,9 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         )
         batch_size = inputs_tensor.shape[0]
         self._prepare_special_tokens(generation_config, kwargs_has_attention_mask, device=inputs_tensor.device)
+
+        logits_processor = logits_processor if logits_processor is not None else LogitsProcessorList([ParlerTTSLogitsProcessor(generation_config.eos_token_id, self.decoder.num_codebooks, batch_size, inputs_tensor.device)])
+        stopping_criteria = stopping_criteria if stopping_criteria is not None else StoppingCriteriaList()
 
         # 4. Define other model kwargs
         model_kwargs["use_cache"] = generation_config.use_cache
