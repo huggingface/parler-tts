@@ -1881,6 +1881,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        loss_reduction: str = "mean",
     ) -> Union[Tuple, ParlerTTSCausalLMOutputWithCrossAttentions]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length, num_codebooks)`, *optional*):
@@ -1925,7 +1926,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
             # since encoder hidden states have concatenated to hidden states, take the last hidden states corresponding to labels
             logits = lm_logits[:, :, -labels.shape[1] :]
 
-            loss_fct = CrossEntropyLoss()
+            loss_fct = CrossEntropyLoss(reduction=loss_reduction)
             loss = torch.zeros([], device=self.device)
             
             per_codebook_losses = []
@@ -2713,6 +2714,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        loss_reduction: str = "mean",
         **kwargs,
     ) -> Union[Tuple, ParlerTTSSeq2SeqLMOutput]:
         r"""
@@ -2857,6 +2859,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             return_dict=return_dict,
             labels=labels,
             cache_position=cache_position,
+            loss_reduction=loss_reduction,
             **kwargs_decoder,
         )
 

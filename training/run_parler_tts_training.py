@@ -21,6 +21,8 @@ import os
 import re
 import sys
 import time
+import math
+import contextlib
 from multiprocess import set_start_method
 from datetime import timedelta
 import inspect
@@ -43,7 +45,7 @@ from transformers.utils import send_example_telemetry
 
 
 from accelerate import Accelerator, skip_first_batches
-from accelerate.utils import set_seed, AutocastKwargs, InitProcessGroupKwargs, TorchDynamoPlugin
+from accelerate.utils import set_seed, AutocastKwargs, InitProcessGroupKwargs, TorchDynamoPlugin, DistributedDataParallelKwargs
 from accelerate.utils.memory import release_memory
 
 from parler_tts import (
@@ -107,7 +109,7 @@ def main():
     padding = "max_length" if data_args.pad_to_max_length else "longest"
 
     ####### A. Preparation
-    kwargs_handlers = [InitProcessGroupKwargs(timeout=timedelta(minutes=120))]
+    kwargs_handlers = [InitProcessGroupKwargs(timeout=timedelta(minutes=120)), DistributedDataParallelKwargs(find_unused_parameters=False)]
 
     accelerator = Accelerator(
         gradient_accumulation_steps=training_args.gradient_accumulation_steps,
@@ -769,8 +771,9 @@ def main():
     # Prepare everything with accelerate
     model, optimizer, lr_scheduler = accelerator.prepare(model, optimizer, lr_scheduler)
 
+    num_examples = total_train_steps * train_batch_size * gradient_accumulation_steps
     logger.info("***** Running training *****")
-    logger.info(f"  Num examples = {total_train_steps * train_batch_size * gradient_accumulation_steps}")
+    logger.info(f"  Num examples = {num_examples}")
     logger.info("  Instantaneous batch size per device =" f" {per_device_train_batch_size}")
     logger.info("  Gradient accumulation steps =" f" {gradient_accumulation_steps}")
     logger.info(
@@ -878,6 +881,8 @@ def main():
         batch,
         accelerator,
         autocast_kwargs,
+        num_items_in_batch,
+        gradient_accumulation_steps,
     ):
         if mixed_precision == "fp16":
             # fp16 doesn't work with T5-like models
@@ -908,15 +913,15 @@ def main():
                 encoder_outputs.last_hidden_state = encoder_hidden_states
                 batch["encoder_outputs"] = encoder_outputs
 
-        outputs = model(**batch)
+        outputs = model(**batch, loss_reduction="sum")
         # CE (data) loss
-        ce_loss = outputs.loss
+        ce_loss = (outputs.loss * gradient_accumulation_steps * accelerator.num_processes) / num_items_in_batch
 
         metrics = {"loss": ce_loss}
         
         # per CE loss
         per_codebook_losses = outputs.per_codebook_losses
-        metrics.update({f"codebook_{i}_loss": l for (i,l) in enumerate(per_codebook_losses)})
+        metrics.update({f"codebook_{i}_loss": ((l  * gradient_accumulation_steps * accelerator.num_processes) / num_items_in_batch) for (i,l) in enumerate(per_codebook_losses)})
         return ce_loss, metrics
 
     # Define eval fn
@@ -982,6 +987,7 @@ def main():
 
     model.train()
 
+    total_batched_samples = resume_step if resume_step is not None else 0
     for epoch in range(epochs_trained, num_epochs):
         with accelerator.local_main_process_first():
             vectorized_datasets["train"] = vectorized_datasets["train"].shuffle(training_args.seed)
@@ -993,6 +999,7 @@ def main():
             collate_fn=data_collator,
             batch_size=per_device_train_batch_size,
             sampler=sampler,
+            shuffle=not training_args.group_by_length,
             num_workers=training_args.dataloader_num_workers,
             pin_memory=training_args.dataloader_pin_memory,
         )
@@ -1007,76 +1014,127 @@ def main():
             resume_step = None
             accelerator.wait_for_everyone()
 
-        for batch in train_dataloader:
-            with accelerator.accumulate(model):
-                loss, train_metric = train_step(batch, accelerator, autocast_kwargs)
-                accelerator.backward(loss)
-                if accelerator.sync_gradients:
-                    accelerator.clip_grad_norm_(model.parameters(), training_args.max_grad_norm)
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad()
+        # We chunkify the epoch iterator into gradient accumulation steps `n` batches
+        train_iterator = iter(train_dataloader)
+        num_steps_in_epoch = len(train_dataloader)
+        remainder = num_steps_in_epoch % gradient_accumulation_steps
+        remainder = remainder if remainder != 0 else gradient_accumulation_steps
+        total_updates = math.ceil(num_steps_in_epoch / gradient_accumulation_steps)
+        
+        update_step = -1
+        for _ in range(total_updates):
+            update_step += 1
+            
+            # preload the total batch per step
+            batch_samples = []
+            num_batches_in_step = gradient_accumulation_steps if update_step != (total_updates - 1) else remainder
+            for _ in range(num_batches_in_step):
+                batch_samples += [next(train_iterator)]
+                
+            # get num items in batch - if different than BOS and than -100
+            num_items_in_batch = sum([(batch["labels"].ne(audio_encoder_bos_token_id) | batch["labels"].ne(-100) | batch["labels"].ne(audio_encoder_eos_token_id)).sum((0,1))[0] for batch in batch_samples])
+            num_items_in_batch = accelerator.gather(num_items_in_batch).sum().item()
+            
+            # losses = []
+            for i,batch in enumerate(batch_samples):
+                total_batched_samples += 1
+                ctx = model.no_sync if (i < len(batch_samples) - 1 and accelerator.num_processes > 1) else contextlib.nullcontext
+                
+                with ctx():
+                    loss, train_metric = train_step(batch, accelerator, autocast_kwargs, num_items_in_batch, gradient_accumulation_steps)
+                    accelerator.backward(loss)
+                    # losses.append(loss.detach())
+            
+            grad_norm = accelerator.clip_grad_norm_(model.parameters(), training_args.max_grad_norm)
+            optimizer.step()
+            lr_scheduler.step()
+            optimizer.zero_grad()
 
-            # Check if the accelerator has performed an optimization step behind the scenes
-            if accelerator.sync_gradients:
-                steps_trained_progress_bar.update(1)
-                cur_step += 1
+            # The accelerator has performed an optimization step behind the scenes
+            steps_trained_progress_bar.update(1)
+            cur_step += 1
 
-                if cur_step % training_args.logging_steps == 0:
-                    steps_trained_progress_bar.write(
-                        f"Step... ({cur_step} / {total_train_steps} | Loss:"
-                        f" {train_metric['loss']}, Learning Rate:"
-                        f" {lr_scheduler.get_last_lr()[0]})"
+            # losses = accelerator.gather(sum(losses)).sum().item() / (accelerator.num_processes * gradient_accumulation_steps)
+            
+            if cur_step % training_args.logging_steps == 0:
+                steps_trained_progress_bar.write(
+                    f"Step... ({cur_step} / {total_train_steps} | Loss:"
+                    f" {train_metric['loss']}, Learning Rate:"
+                    f" {lr_scheduler.get_last_lr()[0]})"
+                )
+                train_metric["grad_norm"] = grad_norm.detach().item() if isinstance(grad_norm, torch.Tensor) else grad_norm
+                log_metric(
+                    accelerator,
+                    metrics=train_metric,
+                    learning_rate=lr_scheduler.get_last_lr()[0],
+                    train_time=train_time + time.time() - train_start,
+                    step=cur_step,
+                    epoch=epoch,
+                    prefix="train",
+                )
+
+            # save checkpoint and weights after each save_steps and at the end of training
+            if (cur_step % training_args.save_steps == 0) or cur_step == total_train_steps:
+                intermediate_dir = os.path.join(training_args.output_dir, f"checkpoint-{cur_step}-epoch-{epoch}")
+                # safe_serialization=False to avoid shared tensors saving issue (TODO(YL): it's a temporary fix)
+                # https://github.com/huggingface/transformers/issues/27293#issuecomment-1872560074
+                accelerator.save_state(output_dir=intermediate_dir, safe_serialization=False)
+                accelerator.wait_for_everyone()
+                if accelerator.is_main_process:
+                    rotate_checkpoints(
+                        training_args.save_total_limit, output_dir=training_args.output_dir, logger=logger
                     )
-                    log_metric(
-                        accelerator,
-                        metrics=train_metric,
-                        learning_rate=lr_scheduler.get_last_lr()[0],
-                        train_time=train_time + time.time() - train_start,
-                        step=cur_step,
-                        epoch=epoch,
-                        prefix="train",
-                    )
 
-                # save checkpoint and weights after each save_steps and at the end of training
-                if (cur_step % training_args.save_steps == 0) or cur_step == total_train_steps:
-                    intermediate_dir = os.path.join(training_args.output_dir, f"checkpoint-{cur_step}-epoch-{epoch}")
-                    # safe_serialization=False to avoid shared tensors saving issue (TODO(YL): it's a temporary fix)
-                    # https://github.com/huggingface/transformers/issues/27293#issuecomment-1872560074
-                    accelerator.save_state(output_dir=intermediate_dir, safe_serialization=False)
-                    accelerator.wait_for_everyone()
-                    if accelerator.is_main_process:
-                        rotate_checkpoints(
-                            training_args.save_total_limit, output_dir=training_args.output_dir, logger=logger
+                    if cur_step == total_train_steps:
+                        # un-wrap student model for save
+                        unwrapped_model = accelerator.unwrap_model(model)
+                        unwrapped_model.save_pretrained(training_args.output_dir)
+
+                    if training_args.push_to_hub:
+                        api.upload_folder(
+                            repo_id=repo_id,
+                            folder_path=training_args.output_dir,
+                            commit_message=f"Saving train state of step {cur_step}",
+                            run_as_future=True,
                         )
+                accelerator.wait_for_everyone()
 
-                        if cur_step == total_train_steps:
-                            # un-wrap student model for save
-                            unwrapped_model = accelerator.unwrap_model(model)
-                            unwrapped_model.save_pretrained(training_args.output_dir)
+            if training_args.do_eval and (cur_step % eval_steps == 0 or cur_step == total_train_steps):
+                train_time += time.time() - train_start
+                # ======================== Evaluating ==============================
+                model.eval()
+                eval_metrics = []
+                eval_preds = []
+                eval_descriptions = []
+                eval_prompts = []
+                eval_start = time.time()
 
-                        if training_args.push_to_hub:
-                            api.upload_folder(
-                                repo_id=repo_id,
-                                folder_path=training_args.output_dir,
-                                commit_message=f"Saving train state of step {cur_step}",
-                                run_as_future=True,
-                            )
-                    accelerator.wait_for_everyone()
+                # release training input batch
+                batch = release_memory(batch)
 
-                if training_args.do_eval and (cur_step % eval_steps == 0 or cur_step == total_train_steps):
-                    train_time += time.time() - train_start
-                    # ======================== Evaluating ==============================
-                    model.eval()
-                    eval_metrics = []
-                    eval_preds = []
-                    eval_descriptions = []
-                    eval_prompts = []
-                    eval_start = time.time()
+                validation_dataloader = DataLoader(
+                    vectorized_datasets["eval"],
+                    collate_fn=data_collator,
+                    batch_size=per_device_eval_batch_size,
+                    drop_last=False,
+                    num_workers=training_args.eval_dataloader_num_workers,
+                    pin_memory=training_args.dataloader_pin_memory,
+                )
+                validation_dataloader = accelerator.prepare(validation_dataloader)
 
-                    # release training input batch
-                    batch = release_memory(batch)
+                for batch in tqdm(
+                    validation_dataloader,
+                    desc=f"Evaluating - Inference ...",
+                    position=2,
+                    disable=not accelerator.is_local_main_process,
+                ):
+                    # Model forward
+                    eval_metric = eval_step(batch, accelerator, autocast_kwargs)
+                    eval_metric = accelerator.gather_for_metrics(eval_metric)
+                    eval_metric = {key: val.unsqueeze(0) if val.ndim == 0 else val for (key,val) in eval_metric.items()}
+                    eval_metrics.append(eval_metric)
 
+                if training_args.predict_with_generate and (cur_step % eval_generation_steps == 0 or cur_step == total_train_steps):
                     validation_dataloader = DataLoader(
                         vectorized_datasets["eval"],
                         collate_fn=data_collator,
@@ -1086,123 +1144,100 @@ def main():
                         pin_memory=training_args.dataloader_pin_memory,
                     )
                     validation_dataloader = accelerator.prepare(validation_dataloader)
-
+                    # generation
                     for batch in tqdm(
                         validation_dataloader,
-                        desc=f"Evaluating - Inference ...",
+                        desc=f"Evaluating - Generation ...",
                         position=2,
                         disable=not accelerator.is_local_main_process,
                     ):
-                        # Model forward
-                        eval_metric = eval_step(batch, accelerator, autocast_kwargs)
-                        eval_metric = accelerator.gather_for_metrics(eval_metric)
-                        eval_metric = {key: val.unsqueeze(0) if val.ndim == 0 else val for (key,val) in eval_metric.items()}
-                        eval_metrics.append(eval_metric)
-
-                    if training_args.predict_with_generate and (cur_step % eval_generation_steps == 0 or cur_step == total_train_steps):
-                        validation_dataloader = DataLoader(
-                            vectorized_datasets["eval"],
-                            collate_fn=data_collator,
-                            batch_size=per_device_eval_batch_size,
-                            drop_last=False,
-                            num_workers=training_args.eval_dataloader_num_workers,
-                            pin_memory=training_args.dataloader_pin_memory,
+                        generated_audios = generate_step(batch, accelerator)
+                        # Gather all predictions and targets
+                        generated_audios, input_ids, prompts = accelerator.pad_across_processes(
+                            (generated_audios, batch["input_ids"], batch["prompt_input_ids"]), dim=1, pad_index=0
                         )
-                        validation_dataloader = accelerator.prepare(validation_dataloader)
-                        # generation
-                        for batch in tqdm(
-                            validation_dataloader,
-                            desc=f"Evaluating - Generation ...",
-                            position=2,
-                            disable=not accelerator.is_local_main_process,
-                        ):
-                            generated_audios = generate_step(batch, accelerator)
-                            # Gather all predictions and targets
-                            generated_audios, input_ids, prompts = accelerator.pad_across_processes(
-                                (generated_audios, batch["input_ids"], batch["prompt_input_ids"]), dim=1, pad_index=0
-                            )
-                            generated_audios, input_ids, prompts = accelerator.gather_for_metrics(
-                                (generated_audios, input_ids, prompts)
-                            )
-                            eval_preds.extend(generated_audios.to("cpu"))
-                            eval_descriptions.extend(input_ids.to("cpu"))
-                            eval_prompts.extend(prompts.to("cpu"))
+                        generated_audios, input_ids, prompts = accelerator.gather_for_metrics(
+                            (generated_audios, input_ids, prompts)
+                        )
+                        eval_preds.extend(generated_audios.to("cpu"))
+                        eval_descriptions.extend(input_ids.to("cpu"))
+                        eval_prompts.extend(prompts.to("cpu"))
 
-                    eval_time = time.time() - eval_start
-                    # normalize eval metrics
-                    eval_metrics = {
-                        key: torch.mean(torch.cat([d[key] for d in eval_metrics])).to("cpu") for key in eval_metrics[0]
-                    }
+                eval_time = time.time() - eval_start
+                # normalize eval metrics
+                eval_metrics = {
+                    key: torch.mean(torch.cat([d[key] for d in eval_metrics])).to("cpu") for key in eval_metrics[0]
+                }
 
-                    # compute metrics
-                    metrics_desc = ""
-                    if training_args.predict_with_generate and (cur_step % eval_generation_steps == 0 or cur_step == total_train_steps):
-                        if accelerator.is_local_main_process:
-                            (
-                                metric_values,
+                # compute metrics
+                metrics_desc = ""
+                if training_args.predict_with_generate and (cur_step % eval_generation_steps == 0 or cur_step == total_train_steps):
+                    if accelerator.is_local_main_process:
+                        (
+                            metric_values,
+                            pred_descriptions,
+                            pred_prompts,
+                            audios,
+                            transcriptions,
+                            si_sdr_measures,
+                        ) = compute_metrics(
+                            eval_preds,
+                            eval_descriptions,
+                            eval_prompts,
+                            accelerator.device,
+                            training_args.compute_clap_similarity_metric,
+                            training_args.compute_noise_level_metric,
+                            training_args.noise_level_to_compute_clean_wer,
+                        )
+                        eval_metrics.update(metric_values)
+                        metrics_desc = " ".join([f"Eval {key}: {value} |" for key, value in metric_values.items()])
+                        if "wandb" in training_args.report_to:
+                            log_pred(
+                                accelerator,
                                 pred_descriptions,
                                 pred_prompts,
-                                audios,
                                 transcriptions,
+                                audios,
                                 si_sdr_measures,
-                            ) = compute_metrics(
-                                eval_preds,
-                                eval_descriptions,
-                                eval_prompts,
-                                accelerator.device,
-                                training_args.compute_clap_similarity_metric,
-                                training_args.compute_noise_level_metric,
-                                training_args.noise_level_to_compute_clean_wer,
+                                sampling_rate=sampling_rate,
+                                step=cur_step,
+                                prefix="eval",
                             )
-                            eval_metrics.update(metric_values)
-                            metrics_desc = " ".join([f"Eval {key}: {value} |" for key, value in metric_values.items()])
-                            if "wandb" in training_args.report_to:
-                                log_pred(
-                                    accelerator,
-                                    pred_descriptions,
-                                    pred_prompts,
-                                    transcriptions,
-                                    audios,
-                                    si_sdr_measures,
-                                    sampling_rate=sampling_rate,
-                                    step=cur_step,
-                                    prefix="eval",
-                                )
-                        accelerator.wait_for_everyone()
+                    accelerator.wait_for_everyone()
 
-                    # Print metrics and update progress bar
-                    if accelerator.is_local_main_process:
-                        steps_trained_progress_bar.write(
-                            f"Eval results for step ({cur_step} / {total_train_steps} | Eval Loss: {eval_metrics['loss']} |"
-                            f" {metrics_desc})"
-                        )
-
-                    log_metric(
-                        accelerator,
-                        metrics=eval_metrics,
-                        train_time=eval_time,
-                        step=cur_step,
-                        epoch=epoch,
-                        prefix="eval",
+                # Print metrics and update progress bar
+                if accelerator.is_local_main_process:
+                    steps_trained_progress_bar.write(
+                        f"Eval results for step ({cur_step} / {total_train_steps} | Eval Loss: {eval_metrics['loss']} |"
+                        f" {metrics_desc})"
                     )
 
-                    # release eval batch and relax metrics
-                    eval_metrics, eval_preds, eval_descriptions, eval_prompts, batch, eval_metric = release_memory(
-                        eval_metrics, eval_preds, eval_descriptions, eval_prompts, batch, eval_metric
-                    )
-                    if training_args.predict_with_generate and (cur_step % eval_generation_steps == 0 or cur_step == total_train_steps):
-                        generated_audios, input_ids, prompts = release_memory(generated_audios, input_ids, prompts)
+                log_metric(
+                    accelerator,
+                    metrics=eval_metrics,
+                    train_time=eval_time,
+                    step=cur_step,
+                    epoch=epoch,
+                    prefix="eval",
+                )
 
-                    # train mode
-                    model.train()
+                # release eval batch and relax metrics
+                eval_metrics, eval_preds, eval_descriptions, eval_prompts, batch, eval_metric = release_memory(
+                    eval_metrics, eval_preds, eval_descriptions, eval_prompts, batch, eval_metric
+                )
+                if training_args.predict_with_generate and (cur_step % eval_generation_steps == 0 or cur_step == total_train_steps):
+                    generated_audios, input_ids, prompts = release_memory(generated_audios, input_ids, prompts)
 
-                    # flush the train metrics
-                    train_start = time.time()
+                # train mode
+                model.train()
 
-                # break condition
-                if cur_step == total_train_steps:
-                    continue_training = False
-                    break
+                # flush the train metrics
+                train_start = time.time()
+
+            # break condition
+            if cur_step == total_train_steps:
+                continue_training = False
+                break
 
         if not continue_training:
             break
