@@ -97,7 +97,6 @@ MUSICGEN_PRETRAINED_MODEL_ARCHIVE_LIST = [
 NEED_SETUP_CACHE_CLASSES_MAPPING = {"static": StaticCache, "sliding_window": SlidingWindowCache}
 
 
-
 @dataclass
 class ParlerTTSSeq2SeqLMOutput(ModelOutput):
     """
@@ -158,6 +157,7 @@ class ParlerTTSSeq2SeqLMOutput(ModelOutput):
     encoder_attentions: Optional[Tuple[torch.FloatTensor, ...]] = None
     per_codebook_losses: Optional[List[torch.FloatTensor]] = None
 
+
 @dataclass
 class ParlerTTSCausalLMOutputWithCrossAttentions(ModelOutput):
     """
@@ -201,6 +201,7 @@ class ParlerTTSCausalLMOutputWithCrossAttentions(ModelOutput):
     attentions: Optional[Tuple[torch.FloatTensor, ...]] = None
     cross_attentions: Optional[Tuple[torch.FloatTensor, ...]] = None
     per_codebook_losses: Optional[List[torch.FloatTensor]] = None
+
 
 def apply_delay_pattern_mask(input_ids, decoder_pad_token_mask):
     """Apply a delay pattern mask to the decoder input ids, only preserving predictions where
@@ -1461,7 +1462,9 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
 
         if cache_position is None:
             cache_position = torch.arange(
-                past_key_values_length, past_key_values_length + input_shape[1] + prepended_sequence_length, device=inputs_embeds.device
+                past_key_values_length,
+                past_key_values_length + input_shape[1] + prepended_sequence_length,
+                device=inputs_embeds.device,
             )
 
         if position_ids is None:
@@ -1830,14 +1833,14 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
         self.num_codebooks = config.num_codebooks
         self.vocab_size = config.vocab_size
         self.num_codebooks = config.num_codebooks
-        
+
         self.use_fused_lm_heads = config.use_fused_lm_heads
         if self.use_fused_lm_heads:
             self.lm_heads = nn.Linear(config.hidden_size, config.vocab_size * config.num_codebooks, bias=False)
         else:
             self.lm_heads = nn.ModuleList(
-            [nn.Linear(config.hidden_size, config.vocab_size, bias=False) for _ in range(config.num_codebooks)]
-        )
+                [nn.Linear(config.hidden_size, config.vocab_size, bias=False) for _ in range(config.num_codebooks)]
+            )
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -1915,7 +1918,11 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
         hidden_states = outputs[0]
 
         if self.use_fused_lm_heads:
-            lm_logits = self.lm_heads(hidden_states).view(hidden_states.shape[0], -1, self.num_codebooks, self.vocab_size).transpose(1,2)
+            lm_logits = (
+                self.lm_heads(hidden_states)
+                .view(hidden_states.shape[0], -1, self.num_codebooks, self.vocab_size)
+                .transpose(1, 2)
+            )
         else:
             lm_logits = torch.stack([head(hidden_states) for head in self.lm_heads], dim=1)
 
@@ -1928,7 +1935,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
 
             loss_fct = CrossEntropyLoss(reduction=loss_reduction)
             loss = torch.zeros([], device=self.device)
-            
+
             per_codebook_losses = []
 
             # (bsz, vocab_size, seq_len, num_codebooks), (bsz, seq_len, num_codebooks)
@@ -1947,8 +1954,8 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
                 per_codebook_losses.append(codebook_loss)
 
                 if codebook_weights is not None:
-                    codebook_loss = codebook_loss*codebook_weights[codebook]
-                    
+                    codebook_loss = codebook_loss * codebook_weights[codebook]
+
                 loss += codebook_loss
 
             if codebook_weights is not None:
@@ -1961,7 +1968,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
 
         if not return_dict:
             output = (lm_logits,) + outputs[1:]
-            return ((loss,) + output + (per_codebook_losses, )) if loss is not None else output
+            return ((loss,) + output + (per_codebook_losses,)) if loss is not None else output
 
         return ParlerTTSCausalLMOutputWithCrossAttentions(
             loss=loss,
@@ -2022,7 +2029,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
             prompt_hidden_states = None
 
         return {
-            "input_ids": input_ids.contiguous(), # `contiguous()` needed for compilation use cases
+            "input_ids": input_ids.contiguous(),  # `contiguous()` needed for compilation use cases
             "attention_mask": attention_mask,
             "position_ids": position_ids,
             "encoder_hidden_states": encoder_hidden_states,
@@ -2418,9 +2425,11 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
 
         self.use_4dim_audio_codes = False
         audio_type = audio_encoder.config.model_type
-        if audio_type in {"encodec", "dac_on_the_hub"} or (audio_type == "dac" and not is_dac_integrated_to_transformers):
-            self.use_4dim_audio_codes = True 
- 
+        if audio_type in {"encodec", "dac_on_the_hub"} or (
+            audio_type == "dac" and not is_dac_integrated_to_transformers
+        ):
+            self.use_4dim_audio_codes = True
+
         # Initialize projection and embedding layers and tie text encoder and decoder weights if set accordingly
         self.post_init()
 
@@ -3160,7 +3169,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         # 3. make sure that encoder returns `ModelOutput`
         model_input_name = model_input_name if model_input_name is not None else self.audio_encoder.main_input_name
         encoder_kwargs["return_dict"] = True
-        
+
         if "num_quantizers" in encoder_signature:
             encoder_kwargs["num_quantizers"] = self.config.decoder.num_codebooks
         elif "num_codebooks" in encoder_signature:
@@ -3272,7 +3281,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         need_new_cache = (
             not hasattr(self, "_cache")
             or (not isinstance(cache_to_check, cache_cls))
-            or cache_to_check.max_batch_size != max_batch_size
+            or cache_to_check.batch_size != max_batch_size
             or cache_to_check.max_cache_len < max_cache_len
         )
 
@@ -3415,7 +3424,17 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         batch_size = inputs_tensor.shape[0]
         self._prepare_special_tokens(generation_config, kwargs_has_attention_mask, device=inputs_tensor.device)
 
-        logits_processor = logits_processor if logits_processor is not None else LogitsProcessorList([ParlerTTSLogitsProcessor(generation_config.eos_token_id, self.decoder.num_codebooks, batch_size, inputs_tensor.device)])
+        logits_processor = (
+            logits_processor
+            if logits_processor is not None
+            else LogitsProcessorList(
+                [
+                    ParlerTTSLogitsProcessor(
+                        generation_config.eos_token_id, self.decoder.num_codebooks, batch_size, inputs_tensor.device
+                    )
+                ]
+            )
+        )
         stopping_criteria = stopping_criteria if stopping_criteria is not None else StoppingCriteriaList()
 
         # 4. Define other model kwargs
@@ -3606,12 +3625,10 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 audio_scales = [None] * batch_size
             audio_decode_kwargs["audio_scales"] = audio_scales
 
-        
         if not self.use_4dim_audio_codes:
             # remove chunk dim
             output_ids = output_ids.squeeze(0)
-            
-            
+
         decode_sequentially = (
             generation_config.bos_token_id in output_ids
             or generation_config.pad_token_id in output_ids
@@ -3627,14 +3644,18 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             output_values = []
             for sample_id in range(batch_size):
                 sample = output_ids[:, sample_id] if self.use_4dim_audio_codes else output_ids[sample_id]
-                sample_mask = (sample >= self.audio_encoder.config.codebook_size)
-                sample_mask = (sample_mask.sum(dim=(0, 1)) == 0) if self.use_4dim_audio_codes else (sample_mask.sum(dim=0) == 0)
+                sample_mask = sample >= self.audio_encoder.config.codebook_size
+                sample_mask = (
+                    (sample_mask.sum(dim=(0, 1)) == 0) if self.use_4dim_audio_codes else (sample_mask.sum(dim=0) == 0)
+                )
                 single_audio_decode_kwargs = {}
                 if self.use_audio_scales:
                     single_audio_decode_kwargs["audio_scales"] = [audio_decode_kwargs["audio_scales"][sample_id]]
                 if sample_mask.sum() > 0:
                     sample = sample[:, :, sample_mask] if self.use_4dim_audio_codes else sample[:, sample_mask]
-                    sample = self.audio_encoder.decode(audio_codes=sample[None, ...], **single_audio_decode_kwargs).audio_values
+                    sample = self.audio_encoder.decode(
+                        audio_codes=sample[None, ...], **single_audio_decode_kwargs
+                    ).audio_values
                     sample = sample if sample.ndim == 3 else sample.unsqueeze(0)
                     output_values.append(sample.transpose(0, 2))
                 else:
