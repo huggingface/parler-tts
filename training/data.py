@@ -1,9 +1,10 @@
 import logging
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set, Union
+from typing import Annotated, Dict, List, Optional, Set, Union
 
 import datasets
 import numpy as np
+import random
 import torch
 from accelerate import Accelerator
 from datasets import Dataset, IterableDataset, concatenate_datasets, interleave_datasets, load_dataset
@@ -73,10 +74,16 @@ class DataCollatorParlerTTSWithPadding:
     prompt_max_length: Optional[int] = None
     description_max_length: Optional[int] = None
     audio_max_length: Optional[int] = None
+    p_drop_description: Optional[float] = None
+    p_drop_prompt: Optional[float] = None
+    range_cond_drop_description: Optional[Annotated[List[float], 2]] = None
 
     def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
         # split inputs and labels since they have to be of different lengths and need
         # different padding methods
+
+        drop_description = random.random() < self.p_drop_description if self.p_drop_description is not None else False
+        drop_prompt = random.random() < self.p_drop_prompt if self.p_drop_prompt is not None else False
 
         labels = [torch.tensor(feature["labels"]).transpose(0, 1) for feature in features]
         # (bsz, seq_len, num_codebooks)
@@ -86,7 +93,19 @@ class DataCollatorParlerTTSWithPadding:
                 labels, pad=(0, 0, 0, max(self.audio_max_length - labels.shape[1], 0)), value=-100
             )
 
+        if drop_description and self.range_cond_drop_description is not None:
+            cond_idx_s, cond_idx_e = int(labels.shape[1] * self.range_cond_drop_description[0]), int(labels.shape[1] * self.range_cond_drop_description[1])
+            len_cond = random.randint(cond_idx_s, cond_idx_e)
+            mask_cond = torch.ones((labels.shape[2], labels.shape[1]), dtype=torch.bool)
+            mask_cond = torch.triu(mask_cond, diagonal=len_cond)
+            mask_cond = mask_cond.unsqueeze(0).repeat(labels.shape[0], 1, 1)
+            labels = (mask_cond * labels.transpose(1, 2) + ~mask_cond * (-100 * torch.ones_like(labels).transpose(1, 2))).transpose(1, 2)
+
         input_ids = [{"input_ids": feature["input_ids"]} for feature in features]
+
+        if drop_description:
+            empty_input_ids = self.description_tokenizer.encode("")
+            input_ids = [{"input_ids": empty_input_ids}] * len(input_ids)
 
         input_ids = self.description_tokenizer.pad(
             input_ids,
@@ -99,6 +118,11 @@ class DataCollatorParlerTTSWithPadding:
         batch = {"labels": labels, **input_ids}
 
         prompt_input_ids = [{"input_ids": feature["prompt_input_ids"]} for feature in features]
+
+        if drop_prompt:
+            empty_prompt_input_ids = self.prompt_tokenizer.encode("")
+            prompt_input_ids = [{"input_ids": empty_prompt_input_ids}] * len(prompt_input_ids)
+
         prompt_input_ids = self.prompt_tokenizer.pad(
             prompt_input_ids,
             return_tensors="pt",

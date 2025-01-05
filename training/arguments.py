@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import Optional, List, Annotated
 
 from transformers import Seq2SeqTrainingArguments
 
@@ -372,4 +372,16 @@ class ParlerTTSTrainingArguments(Seq2SeqTrainingArguments):
     codebook_weights: Optional[List[float]] = field(
         default=None,
         metadata={"help": "Weights applied to each codebook."},
+    )
+    p_drop_description: Optional[float] = field(
+        default=None,
+        metadata={"help": "Probability of dropping the description."},
+    )
+    p_drop_prompt: Optional[float] = field(
+        default=None,
+        metadata={"help": "Probability of dropping the prompt."},
+    )
+    range_cond_drop_description: Optional[Annotated[List[float], 2]] = field(
+        default=None,
+        metadata={"help": "Ratio range of the index up to which the audio codes will not be trained."},
     )

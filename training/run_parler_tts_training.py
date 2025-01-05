@@ -766,6 +766,9 @@ def main():
         prompt_max_length=data_args.max_prompt_token_length,
         description_max_length=data_args.max_description_token_length,
         audio_max_length=audio_max_length,
+        p_drop_description=training_args.p_drop_description,
+        p_drop_prompt=training_args.p_drop_prompt,
+        range_cond_drop_description=training_args.range_cond_drop_description,
     )
 
     # Prepare everything with accelerate
