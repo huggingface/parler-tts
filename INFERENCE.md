@@ -160,6 +160,119 @@ for (sampling_rate, audio_chunk) in generate(text, description, chunk_size_in_s)
   print(audio_chunk.shape) 
 ```
 
+### Async Streamer
+
+If you want to overlap computations, you can use asynchronous streamer, you can check [AsyncParlerTTSStreamer](https://github.com/huggingface/parler-tts/blob/main/parler_tts/streamer.py).
+
+Here's how to use it.
+
+```py
+import torch
+from parler_tts import ParlerTTSForConditionalGeneration, AsyncParlerTTSStreamer
+from transformers import AutoTokenizer
+from threading import Thread
+import asyncio
+
+torch_device = "cuda:0" # Use "mps" for Mac 
+torch_dtype = torch.bfloat16
+model_name = "parler-tts/parler-tts-mini-v1"
+
+# load model and tokenizer
+tokenizer = AutoTokenizer.from_pretrained(model_name) 
+model = ParlerTTSForConditionalGeneration.from_pretrained(
+    model_name,
+).to(torch_device, dtype=torch_dtype)
+
+sampling_rate = model.audio_encoder.config.sampling_rate
+frame_rate = model.audio_encoder.config.frame_rate
+play_steps_in_s = 0.5
+
+async def main(text, request_id):
+  play_steps = int(frame_rate * play_steps_in_s)
+  streamer = AsyncParlerTTSStreamer(model, device=device, play_steps=play_steps)
+  description = "A female speaker with a slightly low-pitched voice"
+  inputs = tokenizer(description, return_tensors="pt").to(device)
+  prompt = tokenizer(text, return_tensors="pt").to(device)
+
+  generation_kwargs = dict(
+    input_ids=inputs.input_ids,
+    prompt_input_ids=prompt.input_ids,
+    attention_mask=inputs.attention_mask,
+    prompt_attention_mask=prompt.attention_mask,
+    streamer=streamer,
+    do_sample=True,
+    temperature=1.0,
+    min_new_tokens=10,
+    decode=False, # to skip final decode to save computation
+  )
+  
+  thread = Thread(target=model.generate, kwargs=generation_kwargs)
+  thread.start()
+  
+  async for new_audio in streamer:
+    if new_audio.shape[0] == 0:
+      break
+        
+    print(f"Request ID: {request_id}, Sample of length: {round(new_audio.shape[0] / sampling_rate, 4)} seconds") 
+
+prompts = [
+  "that can generate high-quality, natural sounding speech with features that can be controlled using a simple text prompt",
+  "which aims to provide the community with TTS training resources and dataset pre-processing code.",
+  "include the term 'very clear audio' to generate the highest quality audio, and 'very noisy audio' for high levels of background noise"
+]
+tasks = []
+for no, p in enumerate(prompts):
+    task = asyncio.create_task(main(p, no))
+    tasks.append(task)
+    
+await asyncio.gather(*tasks)
+```
+
+Output,
+```
+Request ID: 2, Sample of length: 0.329 seconds
+Request ID: 0, Sample of length: 0.329 seconds
+Request ID: 1, Sample of length: 0.329 seconds
+Request ID: 0, Sample of length: 0.4992 seconds
+Request ID: 2, Sample of length: 0.4992 seconds
+Request ID: 1, Sample of length: 0.4992 seconds
+Request ID: 2, Sample of length: 0.4992 seconds
+Request ID: 0, Sample of length: 0.4992 seconds
+Request ID: 1, Sample of length: 0.4992 seconds
+Request ID: 2, Sample of length: 0.4992 seconds
+Request ID: 1, Sample of length: 0.4992 seconds
+Request ID: 0, Sample of length: 0.4992 seconds
+Request ID: 2, Sample of length: 0.4992 seconds
+Request ID: 1, Sample of length: 0.4992 seconds
+Request ID: 0, Sample of length: 0.4992 seconds
+Request ID: 2, Sample of length: 0.4992 seconds
+Request ID: 1, Sample of length: 0.4992 seconds
+Request ID: 0, Sample of length: 0.4992 seconds
+Request ID: 2, Sample of length: 0.4992 seconds
+Request ID: 1, Sample of length: 0.4992 seconds
+Request ID: 0, Sample of length: 0.4992 seconds
+Request ID: 2, Sample of length: 0.4992 seconds
+Request ID: 1, Sample of length: 0.4992 seconds
+Request ID: 0, Sample of length: 0.4992 seconds
+Request ID: 2, Sample of length: 0.4992 seconds
+Request ID: 1, Sample of length: 0.4992 seconds
+Request ID: 0, Sample of length: 0.4992 seconds
+Request ID: 2, Sample of length: 0.4992 seconds
+Request ID: 1, Sample of length: 0.4992 seconds
+Request ID: 0, Sample of length: 0.4992 seconds
+Request ID: 2, Sample of length: 0.4992 seconds
+Request ID: 1, Sample of length: 0.4992 seconds
+Request ID: 0, Sample of length: 0.4992 seconds
+Request ID: 2, Sample of length: 0.4992 seconds
+Request ID: 1, Sample of length: 0.4992 seconds
+Request ID: 0, Sample of length: 0.4489 seconds
+Request ID: 1, Sample of length: 0.2283 seconds
+Request ID: 2, Sample of length: 0.4992 seconds
+Request ID: 2, Sample of length: 0.4992 seconds
+Request ID: 2, Sample of length: 0.4992 seconds
+Request ID: 2, Sample of length: 0.4489 seconds
+```
+
 ## Batch generation
 
 Batching means combining operations for multiple samples to bring the overall time spent generating the samples lower than generating sample per sample.

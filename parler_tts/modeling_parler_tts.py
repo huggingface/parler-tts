@@ -2276,7 +2276,6 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
             output_ids = outputs.sequences
         else:
             output_ids = outputs
-
         # apply the pattern mask to the final ids
         output_ids = self.apply_delay_pattern_mask(output_ids, model_kwargs["delay_pattern_mask"])
 
@@ -2296,6 +2295,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
             return outputs
         else:
             return output_ids
+
 
 
 @add_start_docstrings(
@@ -3327,6 +3327,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         stopping_criteria: Optional[StoppingCriteriaList] = None,
         synced_gpus: Optional[bool] = None,
         streamer: Optional["BaseStreamer"] = None,
+        decode: Optional[bool] = True,
         **kwargs,
     ):
         """
@@ -3370,6 +3371,8 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             streamer (`BaseStreamer`, *optional*):
                 Streamer object that will be used to stream the generated sequences. Generated tokens are passed
                 through `streamer.put(token_ids)` and the streamer is responsible for any further processing.
+            decode (`bool`, *optional*, defaults to `True`):
+                Decode the output from LLM using DACEncoder.
             kwargs (`Dict[str, Any]`, *optional*):
                 Ad hoc parametrization of `generate_config` and/or additional model-specific kwargs that will be
                 forwarded to the `forward` function of the model. If the model is an encoder-decoder model, encoder
@@ -3577,80 +3580,83 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 "Ensure that beam search is de-activated by setting `num_beams=1` and `num_beam_groups=1`."
             )
 
-        if generation_config.return_dict_in_generate:
-            output_ids = outputs.sequences
-        else:
-            output_ids = outputs
+        if decode:
+            if generation_config.return_dict_in_generate:
+                output_ids = outputs.sequences
+            else:
+                output_ids = outputs
 
-        # Apply the pattern mask to the final ids
-        output_ids = self.decoder.apply_delay_pattern_mask(output_ids, model_kwargs["decoder_delay_pattern_mask"])
+            # Apply the pattern mask to the final ids
+            output_ids = self.decoder.apply_delay_pattern_mask(output_ids, model_kwargs["decoder_delay_pattern_mask"])
 
-        # Revert the pattern delay mask by filtering the eos and bos token ids from the delay pattern mask
-        _, mask = self.decoder.build_delay_pattern_mask(
-            input_ids,
-            bos_token_id=generation_config.bos_token_id,
-            pad_token_id=generation_config.pad_token_id,
-            max_length=output_ids.shape[1],
-        )
-
-        mask = (mask != generation_config.bos_token_id) & (mask != generation_config.pad_token_id)
-        output_ids = output_ids[mask].reshape(batch_size, self.decoder.num_codebooks, -1)
-
-        # append the frame dimension back to the audio codes
-        output_ids = output_ids[None, ...]
-
-        audio_decode_kwargs = {}
-        if self.use_audio_scales:
-            audio_scales = model_kwargs.get("audio_scales")
-            if audio_scales is None:
-                audio_scales = [None] * batch_size
-            audio_decode_kwargs["audio_scales"] = audio_scales
-
-        
-        if not self.use_4dim_audio_codes:
-            # remove chunk dim
-            output_ids = output_ids.squeeze(0)
-            
-            
-        decode_sequentially = (
-            generation_config.bos_token_id in output_ids
-            or generation_config.pad_token_id in output_ids
-            or generation_config.eos_token_id in output_ids
-        )
-        if not decode_sequentially:
-            output_values = self.audio_encoder.decode(
-                audio_codes=output_ids,
-                **audio_decode_kwargs,
-            ).audio_values.squeeze(1)
-            output_lengths = [audio.shape[0] for audio in output_values]
-        else:
-            output_values = []
-            for sample_id in range(batch_size):
-                sample = output_ids[:, sample_id] if self.use_4dim_audio_codes else output_ids[sample_id]
-                sample_mask = (sample >= self.audio_encoder.config.codebook_size)
-                sample_mask = (sample_mask.sum(dim=(0, 1)) == 0) if self.use_4dim_audio_codes else (sample_mask.sum(dim=0) == 0)
-                single_audio_decode_kwargs = {}
-                if self.use_audio_scales:
-                    single_audio_decode_kwargs["audio_scales"] = [audio_decode_kwargs["audio_scales"][sample_id]]
-                if sample_mask.sum() > 0:
-                    sample = sample[:, :, sample_mask] if self.use_4dim_audio_codes else sample[:, sample_mask]
-                    sample = self.audio_encoder.decode(audio_codes=sample[None, ...], **single_audio_decode_kwargs).audio_values
-                    sample = sample if sample.ndim == 3 else sample.unsqueeze(0)
-                    output_values.append(sample.transpose(0, 2))
-                else:
-                    output_values.append(torch.zeros((1, 1, 1)).to(self.device))
-            output_lengths = [audio.shape[0] for audio in output_values]
-            output_values = (
-                torch.nn.utils.rnn.pad_sequence(output_values, batch_first=True, padding_value=0)
-                .squeeze(-1)
-                .squeeze(-1)
+            # Revert the pattern delay mask by filtering the eos and bos token ids from the delay pattern mask
+            _, mask = self.decoder.build_delay_pattern_mask(
+                input_ids,
+                bos_token_id=generation_config.bos_token_id,
+                pad_token_id=generation_config.pad_token_id,
+                max_length=output_ids.shape[1],
             )
-        if generation_config.return_dict_in_generate:
-            outputs["audios_length"] = output_lengths
-            outputs.sequences = output_values
-            return outputs
+
+            mask = (mask != generation_config.bos_token_id) & (mask != generation_config.pad_token_id)
+            output_ids = output_ids[mask].reshape(batch_size, self.decoder.num_codebooks, -1)
+
+            # append the frame dimension back to the audio codes
+            output_ids = output_ids[None, ...]
+
+            audio_decode_kwargs = {}
+            if self.use_audio_scales:
+                audio_scales = model_kwargs.get("audio_scales")
+                if audio_scales is None:
+                    audio_scales = [None] * batch_size
+                audio_decode_kwargs["audio_scales"] = audio_scales
+
+            
+            if not self.use_4dim_audio_codes:
+                # remove chunk dim
+                output_ids = output_ids.squeeze(0)
+                
+                
+            decode_sequentially = (
+                generation_config.bos_token_id in output_ids
+                or generation_config.pad_token_id in output_ids
+                or generation_config.eos_token_id in output_ids
+            )
+            if not decode_sequentially:
+                output_values = self.audio_encoder.decode(
+                    audio_codes=output_ids,
+                    **audio_decode_kwargs,
+                ).audio_values.squeeze(1)
+                output_lengths = [audio.shape[0] for audio in output_values]
+            else:
+                output_values = []
+                for sample_id in range(batch_size):
+                    sample = output_ids[:, sample_id] if self.use_4dim_audio_codes else output_ids[sample_id]
+                    sample_mask = (sample >= self.audio_encoder.config.codebook_size)
+                    sample_mask = (sample_mask.sum(dim=(0, 1)) == 0) if self.use_4dim_audio_codes else (sample_mask.sum(dim=0) == 0)
+                    single_audio_decode_kwargs = {}
+                    if self.use_audio_scales:
+                        single_audio_decode_kwargs["audio_scales"] = [audio_decode_kwargs["audio_scales"][sample_id]]
+                    if sample_mask.sum() > 0:
+                        sample = sample[:, :, sample_mask] if self.use_4dim_audio_codes else sample[:, sample_mask]
+                        sample = self.audio_encoder.decode(audio_codes=sample[None, ...], **single_audio_decode_kwargs).audio_values
+                        sample = sample if sample.ndim == 3 else sample.unsqueeze(0)
+                        output_values.append(sample.transpose(0, 2))
+                    else:
+                        output_values.append(torch.zeros((1, 1, 1)).to(self.device))
+                output_lengths = [audio.shape[0] for audio in output_values]
+                output_values = (
+                    torch.nn.utils.rnn.pad_sequence(output_values, batch_first=True, padding_value=0)
+                    .squeeze(-1)
+                    .squeeze(-1)
+                )
+            if generation_config.return_dict_in_generate:
+                outputs["audios_length"] = output_lengths
+                outputs.sequences = output_values
+                return outputs
+            else:
+                return output_values
         else:
-            return output_values
+            return outputs
 
     def _get_initial_cache_position(self, input_ids, model_kwargs):
         """Calculates `cache_position` for the pre-fill stage based on `input_ids` and optionally past length"""

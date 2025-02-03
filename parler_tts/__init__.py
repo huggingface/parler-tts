@@ -12,7 +12,7 @@ from .modeling_parler_tts import (
     build_delay_pattern_mask,
 )
 
-from .streamer import ParlerTTSStreamer
+from .streamer import ParlerTTSStreamer, AsyncParlerTTSStreamer
 
 from importlib.metadata import version
 from packaging.version import Version
