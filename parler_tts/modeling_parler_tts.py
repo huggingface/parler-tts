@@ -3289,7 +3289,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 cache_dtype = self.dtype
             cache_kwargs = {
                 "config": self.config.decoder,
-                "max_batch_size": max_batch_size,
+                "batch_size": max_batch_size,
                 "max_cache_len": max_cache_len,
                 "device": self.device,
                 "dtype": cache_dtype,
