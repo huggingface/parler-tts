@@ -1,0 +1,15 @@
+packaging
+torch
+transformers==4.48.0
+sentencepiece
+descript-audio-codec
+descript-audiotools @ git+https://github.com/descriptinc/audiotools
+protobuf>=4.0.0
+fastapi
+uvicorn
+pydantic-settings
+huggingface-hub
+openai
+torch
+parler_tts @ git+https://github.com/slabstech/parler-tts.git
+flash-attn

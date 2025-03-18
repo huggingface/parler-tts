@@ -25,6 +25,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import CrossEntropyLoss
 from transformers import AutoConfig, AutoModel, AutoModelForTextEncoding
+from transformers import PreTrainedModel, GenerationMixin
 from transformers.activations import ACT2FN
 from transformers.cache_utils import (
     Cache,
@@ -1693,7 +1694,7 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
         min_dtype = torch.finfo(dtype).min
         sequence_length = input_tensor.shape[1]
         if using_static_cache:
-            target_length = past_key_values.get_max_length()
+            target_length = past_key_values.get_max_cache_shape()
         else:
             target_length = (
                 attention_mask.shape[-1]
@@ -1821,7 +1822,7 @@ class ParlerTTSModel(ParlerTTSPreTrainedModel):
     "The Parler-TTS decoder model with a language modelling head on top.",
     MUSICGEN_START_DOCSTRING,
 )
-class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
+class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel, GenerationMixin):
     def __init__(self, config: ParlerTTSDecoderConfig):
         super().__init__(config)
 
@@ -2303,7 +2304,8 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
     "for music generation tasks with one or both of text and audio prompts.",
     MUSICGEN_START_DOCSTRING,
 )
-class ParlerTTSForConditionalGeneration(PreTrainedModel):
+class ParlerTTSForConditionalGeneration(PreTrainedModel, GenerationMixin):
+#class ParlerTTSForConditionalGeneration(PreTrainedModel):
     config_class = ParlerTTSConfig
     base_model_prefix = "encoder_decoder"
     main_input_name = "input_ids"

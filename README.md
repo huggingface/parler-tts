@@ -120,6 +120,10 @@ We've set up an [inference guide](INFERENCE.md) to make generation faster. Think
 
 https://github.com/huggingface/parler-tts/assets/52246514/251e2488-fe6e-42c1-81cd-814c5b7795b0
 
+- Inference Optimisation on L4 instance
+  - Check this example with [torch.compile](parler_tts/inference_optimisation/inference_optimisation.py) with transformer 4.48.0 version.
+  - [Fast API](parler_tts/inference_optimisation/fast_api_server.py) server for easy to use setup
+
 ## Training
 
 <a target="_blank" href="https://github.com/ylacombe/scripts_and_notebooks/blob/main/Finetuning_Parler_TTS_v1_on_a_single_speaker_dataset.ipynb"> 
