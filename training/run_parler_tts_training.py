@@ -54,6 +54,9 @@ from parler_tts import (
     build_delay_pattern_mask,
 )
 
+# Import LoRA functionality
+from training.lora import apply_lora_to_model
+
 from training.utils import (
     get_last_checkpoint,
     rotate_checkpoints,
@@ -338,6 +341,22 @@ def main():
         trust_remote_code=data_args.trust_remote_code,
         attn_implementation={"decoder": model_args.attn_implementation, "text_encoder": "eager"},
     )
+
+    # Apply LoRA if enabled
+    if model_args.use_lora:
+        logger.info(f"Applying LoRA with rank {model_args.lora_rank} to target modules: {model_args.lora_target_modules}")
+        model = apply_lora_to_model(
+            model=model,
+            target_modules=model_args.lora_target_modules,
+            r=model_args.lora_rank,
+            lora_alpha=model_args.lora_alpha,
+            lora_dropout=model_args.lora_dropout
+        )
+        # Log trainable parameters after LoRA application
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        logger.info(f"Total parameters: {total_params}")
+        logger.info(f"Trainable parameters: {trainable_params} ({trainable_params/total_params*100:.2f}%)")
 
     # enable gradient checkpointing if necessary
     if training_args.gradient_checkpointing:
@@ -1088,6 +1107,15 @@ def main():
                     if cur_step == total_train_steps:
                         # un-wrap student model for save
                         unwrapped_model = accelerator.unwrap_model(model)
+                        
+                        # If using LoRA, save LoRA weights separately
+                        if model_args.use_lora and hasattr(unwrapped_model, 'save_lora_weights') and model_args.lora_weights_path is None:
+                            unwrapped_model.save_lora_weights(os.path.join(training_args.output_dir, "final_lora_weights.pt"))
+                            logger.info(f"Final LoRA weights saved to {os.path.join(training_args.output_dir, 'final_lora_weights.pt')}")
+                        elif model_args.use_lora and hasattr(unwrapped_model, 'save_lora_weights') and model_args.lora_weights_path is not None:
+                            unwrapped_model.save_lora_weights(model_args.lora_weights_path)
+                            logger.info(f"Final LoRA weights saved to {model_args.lora_weights_path}")
+                        
                         unwrapped_model.save_pretrained(training_args.output_dir)
 
                     if training_args.push_to_hub:
