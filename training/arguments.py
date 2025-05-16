@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import Optional, List, Union
 
-from transformers import Seq2SeqTrainingArguments
+from transformers import Seq2SeqTrainingArguments, TrainingArguments
 
 
 @dataclass
@@ -93,6 +93,30 @@ class ModelArguments:
         metadata={
             "help": "Prompt tokenizer padding side. Defaults to `left`. If the prompt is pre-pended to the codebooks hidden states, it should be padded on the left."
         },
+    )
+    use_lora: bool = field(
+        default=False,
+        metadata={"help": "Whether to use LoRA for parameter-efficient fine-tuning"}
+    )
+    lora_rank: int = field(
+        default=8,
+        metadata={"help": "Rank of LoRA adaptation matrices"}
+    )
+    lora_alpha: float = field(
+        default=16.0,
+        metadata={"help": "LoRA alpha parameter (scaling factor)"}
+    )
+    lora_dropout: float = field(
+        default=0.05,
+        metadata={"help": "Dropout probability for LoRA layers"}
+    )
+    lora_target_modules: List[str] = field(
+        default_factory=lambda: ['q_proj', 'k_proj', 'v_proj', 'out_proj', 'fc1', 'fc2'],
+        metadata={"help": "Names of modules to apply LoRA to"}
+    )
+    lora_weights_path: Optional[str] = field(
+        default=None,
+        metadata={"help": "Path to pretrained LoRA weights to load"}
     )
 
 
