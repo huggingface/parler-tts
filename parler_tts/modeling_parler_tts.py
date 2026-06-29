@@ -2167,8 +2167,8 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
         model_kwargs["use_cache"] = generation_config.use_cache
 
         if model_kwargs.get("attention_mask", None) is None and requires_attention_mask:
-            self._prepare_attention_mask_for_generation(
-                input_ids, generation_config.pad_token_id, generation_config.eos_token_id
+            model_kwargs["attention_mask"] = self._prepare_attention_mask_for_generation(
+                input_ids, generation_config._pad_token_tensor, generation_config._eos_token_tensor
             )
 
         # 5. Prepare `max_length` depending on other stopping criteria.
