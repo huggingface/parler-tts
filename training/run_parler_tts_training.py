@@ -429,6 +429,7 @@ def main():
             padding=padding,
         )
         encoder_signature = set(inspect.signature(audio_decoder.forward).parameters)
+        encode_signature = set(inspect.signature(audio_decoder.encode).parameters)
 
         def apply_audio_decoder(batch):
             len_audio = batch.pop("len_audio")
@@ -441,6 +442,8 @@ def main():
                 batch["num_codebooks"] = num_codebooks
             elif "n_quantizers" in encoder_signature:
                 batch["n_quantizers"] = num_codebooks
+
+            batch = {k: v for k, v in batch.items() if k in encode_signature}
 
             with torch.no_grad():
                 labels = audio_decoder.encode(**batch)["audio_codes"]
